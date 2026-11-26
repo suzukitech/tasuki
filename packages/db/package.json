@@ -1,0 +1,8 @@
+{
+	"name": "@tasuki/db",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/index.ts"
+	}
+}

@@ -1,0 +1,7 @@
+node_modules/
+coverage/
+dist/
+*.db
+*.db-*
+tasuki-data/
+.DS_Store
