@@ -6,8 +6,10 @@
 		".": "./src/app.ts"
 	},
 	"dependencies": {
+		"@modelcontextprotocol/sdk": "~1.32.0",
 		"@tasuki/core": "workspace:*",
 		"@tasuki/db": "workspace:*",
+		"@tasuki/mcp": "workspace:*",
 		"@tasuki/schema": "workspace:*",
 		"hono": "^4.13",
 		"zod": "^4"

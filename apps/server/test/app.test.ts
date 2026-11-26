@@ -178,7 +178,7 @@ describe("tokens", () => {
 		const t = await r.json();
 		expect(t.token).toStartWith("tsk_");
 		expect(t.claudeMcpAdd).toBe(
-			`claude mcp add --transport http tasuki http://localhost:3000/mcp --header "Authorization: Bearer ${t.token}"`,
+			`claude mcp add --transport http tasuki http://localhost:3000/mcp --header "Authorization: Bearer ${t.token}" --header "X-Tasuki-Client: claude-code"`,
 		);
 		const listed = await (await a.req("GET", "/me/tokens")).text();
 		expect(listed).toContain("ai");

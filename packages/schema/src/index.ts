@@ -7,6 +7,9 @@ export const PRIORITIES = {
 	high: 3,
 	urgent: 4,
 } as const;
+/** Priority label ("high"), "none" for null / 0. */
+export const priorityName = (p: number | null) =>
+	Object.entries(PRIORITIES).find(([, v]) => v === (p ?? 0))?.[0] ?? String(p);
 export const PRIORITY_MAX = Math.max(...Object.values(PRIORITIES));
 
 const md = (max = 4000) => z.string().max(max);
