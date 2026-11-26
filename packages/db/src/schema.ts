@@ -15,10 +15,11 @@ const id = () =>
 		.primaryKey()
 		.$defaultFn(() => Bun.randomUUIDv7());
 const ts = (name: string) => integer(name, { mode: "timestamp_ms" });
-const createdAt = () =>
-	ts("created_at")
+const now = (name: string) =>
+	ts(name)
 		.notNull()
 		.$defaultFn(() => new Date());
+const createdAt = () => now("created_at");
 
 export const STATUS_CATEGORIES = [
 	"draft",
@@ -64,7 +65,10 @@ export const projectMembers = sqliteTable(
 			.notNull()
 			.default("member"),
 	},
-	(t) => [primaryKey({ columns: [t.projectId, t.userId] })],
+	(t) => [
+		primaryKey({ columns: [t.projectId, t.userId] }),
+		index("project_members_user_idx").on(t.userId),
+	],
 );
 
 export const statuses = sqliteTable(
@@ -124,14 +128,13 @@ export const issues = sqliteTable(
 			.notNull()
 			.default(false),
 		createdAt: createdAt(),
-		updatedAt: ts("updated_at")
-			.notNull()
-			.$defaultFn(() => new Date()),
+		updatedAt: now("updated_at"),
 		closedAt: ts("closed_at"),
 	},
 	(t) => [
 		uniqueIndex("issues_project_number_uq").on(t.projectId, t.number),
 		index("issues_project_status_idx").on(t.projectId, t.statusId),
+		index("issues_status_idx").on(t.statusId),
 		index("issues_assignee_idx").on(t.assigneeId),
 		index("issues_parent_idx").on(t.parentId),
 		check(
@@ -164,7 +167,10 @@ export const issueLabels = sqliteTable(
 			.notNull()
 			.references(() => labels.id, { onDelete: "cascade" }),
 	},
-	(t) => [primaryKey({ columns: [t.issueId, t.labelId] })],
+	(t) => [
+		primaryKey({ columns: [t.issueId, t.labelId] }),
+		index("issue_labels_label_idx").on(t.labelId),
+	],
 );
 
 export const issueLinks = sqliteTable(
@@ -309,7 +315,10 @@ export const planCriteria = sqliteTable(
 			.references(() => acceptanceCriteria.id, { onDelete: "cascade" }),
 		stepRef: text("step_ref"),
 	},
-	(t) => [primaryKey({ columns: [t.planId, t.criterionId] })],
+	(t) => [
+		primaryKey({ columns: [t.planId, t.criterionId] }),
+		index("plan_criteria_criterion_idx").on(t.criterionId),
+	],
 );
 
 export const reports = sqliteTable(
@@ -356,9 +365,7 @@ export const agentSessions = sqliteTable(
 		issueId: issueRef(),
 		userId: text("user_id").references(() => users.id),
 		client: text("client").notNull(),
-		startedAt: ts("started_at")
-			.notNull()
-			.$defaultFn(() => new Date()),
+		startedAt: now("started_at"),
 		expiresAt: ts("expires_at").notNull(),
 		endedAt: ts("ended_at"),
 		outcome: text("outcome"),

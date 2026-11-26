@@ -5,7 +5,7 @@ import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import * as schema from "./schema";
 
 export * from "./schema";
-export { schema };
+export * from "./seed";
 
 export type Db = ReturnType<typeof openDb>;
 
@@ -41,4 +41,3 @@ export function searchIssueIds(
 		.all()
 		.map((r) => r.id);
 }
-export * from "./seed";

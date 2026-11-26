@@ -1,6 +1,6 @@
 {
-	"id": "6a898120-ba0b-4ac4-86e2-6d0ae6d38ac6",
-	"prevId": "4391ea7d-ab38-4883-88e4-7a87d0600782",
+	"id": "c2136efb-851d-4db1-a6b7-35fff95168b6",
+	"prevId": "19cc69df-4b74-4b2b-b65d-cd0499815a9a",
 	"version": "6",
 	"dialect": "sqlite",
 	"tables": {
@@ -632,7 +632,13 @@
 					"autoincrement": false
 				}
 			},
-			"indexes": {},
+			"indexes": {
+				"issue_labels_label_idx": {
+					"name": "issue_labels_label_idx",
+					"columns": ["label_id"],
+					"isUnique": false
+				}
+			},
 			"foreignKeys": {
 				"issue_labels_issue_id_issues_id_fk": {
 					"name": "issue_labels_issue_id_issues_id_fk",
@@ -1008,6 +1014,11 @@
 					"columns": ["project_id", "status_id"],
 					"isUnique": false
 				},
+				"issues_status_idx": {
+					"name": "issues_status_idx",
+					"columns": ["status_id"],
+					"isUnique": false
+				},
 				"issues_assignee_idx": {
 					"name": "issues_assignee_idx",
 					"columns": ["assignee_id"],
@@ -1250,7 +1261,13 @@
 					"autoincrement": false
 				}
 			},
-			"indexes": {},
+			"indexes": {
+				"plan_criteria_criterion_idx": {
+					"name": "plan_criteria_criterion_idx",
+					"columns": ["criterion_id"],
+					"isUnique": false
+				}
+			},
 			"foreignKeys": {
 				"plan_criteria_plan_id_plans_id_fk": {
 					"name": "plan_criteria_plan_id_plans_id_fk",
@@ -1415,7 +1432,13 @@
 					"default": "'member'"
 				}
 			},
-			"indexes": {},
+			"indexes": {
+				"project_members_user_idx": {
+					"name": "project_members_user_idx",
+					"columns": ["user_id"],
+					"isUnique": false
+				}
+			},
 			"foreignKeys": {
 				"project_members_project_id_projects_id_fk": {
 					"name": "project_members_project_id_projects_id_fk",

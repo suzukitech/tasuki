@@ -100,6 +100,7 @@ CREATE TABLE `issue_labels` (
 	FOREIGN KEY (`label_id`) REFERENCES `labels`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE INDEX `issue_labels_label_idx` ON `issue_labels` (`label_id`);--> statement-breakpoint
 CREATE TABLE `issue_links` (
 	`from_id` text NOT NULL,
 	`to_id` text NOT NULL,
@@ -163,6 +164,7 @@ CREATE TABLE `issues` (
 --> statement-breakpoint
 CREATE UNIQUE INDEX `issues_project_number_uq` ON `issues` (`project_id`,`number`);--> statement-breakpoint
 CREATE INDEX `issues_project_status_idx` ON `issues` (`project_id`,`status_id`);--> statement-breakpoint
+CREATE INDEX `issues_status_idx` ON `issues` (`status_id`);--> statement-breakpoint
 CREATE INDEX `issues_assignee_idx` ON `issues` (`assignee_id`);--> statement-breakpoint
 CREATE INDEX `issues_parent_idx` ON `issues` (`parent_id`);--> statement-breakpoint
 CREATE TABLE `labels` (
@@ -195,6 +197,7 @@ CREATE TABLE `plan_criteria` (
 	FOREIGN KEY (`criterion_id`) REFERENCES `acceptance_criteria`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE INDEX `plan_criteria_criterion_idx` ON `plan_criteria` (`criterion_id`);--> statement-breakpoint
 CREATE TABLE `plans` (
 	`id` text PRIMARY KEY NOT NULL,
 	`issue_id` text NOT NULL,
@@ -220,6 +223,7 @@ CREATE TABLE `project_members` (
 	FOREIGN KEY (`user_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE cascade
 );
 --> statement-breakpoint
+CREATE INDEX `project_members_user_idx` ON `project_members` (`user_id`);--> statement-breakpoint
 CREATE TABLE `projects` (
 	`id` text PRIMARY KEY NOT NULL,
 	`key` text NOT NULL,

@@ -1,6 +1,9 @@
-import { eq } from "drizzle-orm";
-import { generateKeyBetween } from "fractional-indexing";
+import { generateNKeysBetween } from "fractional-indexing";
 import type { Db } from "./index";
+
+/** A db handle or a transaction: anything with insert/select. */
+type Tx = Pick<Db, "insert">;
+
 import {
 	issues,
 	issueTemplates,
@@ -47,7 +50,7 @@ export const DEFAULT_TEMPLATES = [
 	},
 ] as const;
 
-export function createDefaultStatuses(db: Db, projectId: string) {
+export function createDefaultStatuses(db: Tx, projectId: string) {
 	return db
 		.insert(statuses)
 		.values(
@@ -57,7 +60,7 @@ export function createDefaultStatuses(db: Db, projectId: string) {
 		.all();
 }
 
-export function createDefaultIssueTypes(db: Db, projectId: string) {
+export function createDefaultIssueTypes(db: Tx, projectId: string) {
 	return db
 		.insert(issueTypes)
 		.values(DEFAULT_ISSUE_TYPES.map((name) => ({ projectId, name })))
@@ -65,56 +68,53 @@ export function createDefaultIssueTypes(db: Db, projectId: string) {
 		.all();
 }
 
+const SAMPLE_ISSUES = [
+	{ title: "ログイン画面を作る", type: "タスク", category: "ready" },
+	{ title: "パスワード再設定でエラーになる", type: "バグ", category: "draft" },
+	{ title: "通知機能", type: "エピック", category: "draft" },
+] as const;
+
 export function seedSampleProject(db: Db, ownerUserId: string) {
-	const project = db
-		.insert(projects)
-		.values({ key: "DEMO", name: "サンプルプロジェクト" })
-		.returning()
-		.get();
-	db.insert(projectMembers)
-		.values({ projectId: project.id, userId: ownerUserId, role: "manager" })
-		.run();
-	const sts = createDefaultStatuses(db, project.id);
-	const types = createDefaultIssueTypes(db, project.id);
-	const type = (name: string) => types.find((t) => t.name === name)?.id;
-	const status = (category: string) => {
-		const s = sts.find((x) => x.category === category);
-		if (!s) throw new Error(`missing status ${category}`);
-		return s.id;
-	};
-	for (const t of DEFAULT_TEMPLATES) {
-		db.insert(issueTemplates)
+	return db.transaction((tx) => {
+		const project = tx
+			.insert(projects)
 			.values({
-				projectId: project.id,
-				name: t.name,
-				bodyTemplateMd: t.bodyTemplateMd,
-				criteriaTemplate: JSON.stringify(t.criteria),
+				key: "DEMO",
+				name: "サンプルプロジェクト",
+				nextNumber: SAMPLE_ISSUES.length + 1,
 			})
+			.returning()
+			.get();
+		tx.insert(projectMembers)
+			.values({ projectId: project.id, userId: ownerUserId, role: "manager" })
 			.run();
-	}
-	const samples = [
-		{ title: "ログイン画面を作る", type: "タスク", status: "ready" },
-		{ title: "パスワード再設定でエラーになる", type: "バグ", status: "draft" },
-		{ title: "通知機能", type: "エピック", status: "draft" },
-	];
-	let rank: string | null = null;
-	samples.forEach((s, i) => {
-		rank = generateKeyBetween(rank, null);
-		db.insert(issues)
-			.values({
-				projectId: project.id,
-				number: i + 1,
-				title: s.title,
-				typeId: type(s.type),
-				statusId: status(s.status),
-				reporterId: ownerUserId,
-				rank,
-			})
+		const sts = createDefaultStatuses(tx, project.id);
+		const types = createDefaultIssueTypes(tx, project.id);
+		tx.insert(issueTemplates)
+			.values(
+				DEFAULT_TEMPLATES.map((t) => ({
+					projectId: project.id,
+					name: t.name,
+					bodyTemplateMd: t.bodyTemplateMd,
+					criteriaTemplate: JSON.stringify(t.criteria),
+				})),
+			)
 			.run();
+		const ranks = generateNKeysBetween(null, null, SAMPLE_ISSUES.length);
+		tx.insert(issues)
+			.values(
+				SAMPLE_ISSUES.map((s, i) => ({
+					projectId: project.id,
+					number: i + 1,
+					title: s.title,
+					typeId: types.find((t) => t.name === s.type)?.id,
+					// biome-ignore lint/style/noNonNullAssertion: every category is in DEFAULT_STATUSES
+					statusId: sts.find((x) => x.category === s.category)!.id,
+					reporterId: ownerUserId,
+					rank: ranks[i] as string,
+				})),
+			)
+			.run();
+		return project;
 	});
-	db.update(projects)
-		.set({ nextNumber: samples.length + 1 })
-		.where(eq(projects.id, project.id))
-		.run();
-	return project;
 }
