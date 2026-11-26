@@ -100,7 +100,7 @@ export const tokenInput = z.object({
 	name: z.string().trim().min(1).max(100),
 	scopes: z.array(z.enum(["read", "write"])).min(1),
 	projectIds: z.array(z.string()).nullable().default(null),
-	expiresAt: z.date().nullish(),
+	expiresAt: z.coerce.date().nullish(),
 });
 
 export const registerInput = z.object({
@@ -109,9 +109,27 @@ export const registerInput = z.object({
 	password: z.string().min(8).max(200),
 });
 
-export const bulkInput = z.object({
-	refs: z.array(z.string()).min(1).max(100),
-	assigneeId: z.string().nullish(),
-	statusId: z.string().optional(),
-	labels: labelNames.optional(),
+export const bulkInput = updateIssueInput
+	.pick({ assigneeId: true, labels: true })
+	.extend({
+		refs: z.array(z.string()).min(1).max(100),
+		statusId: z.string().optional(),
+	});
+
+// --- small REST request bodies ---
+export const loginInput = z.object({ email: z.string(), password: z.string() });
+export const inviteAcceptInput = registerInput.extend({ token: z.string() });
+export const noteBody = z.object({ note: z.string() });
+export const optNoteBody = noteBody.partial();
+export const moveInput = z.object({
+	statusId: z.string(),
+	rank: z.string().optional(),
+});
+export const completeInput = moveInput.partial();
+export const answerInput = z.object({ answerMd: z.string() });
+export const commentInput = z.object({ bodyMd: z.string() });
+export const listQuery = z.object({
+	q: z.string().default(""),
+	cursor: z.coerce.number().int().min(0).optional(),
+	limit: z.coerce.number().int().min(1).max(200).optional(),
 });

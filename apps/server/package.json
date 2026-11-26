@@ -8,6 +8,7 @@
 	"dependencies": {
 		"@tasuki/core": "workspace:*",
 		"@tasuki/db": "workspace:*",
+		"@tasuki/schema": "workspace:*",
 		"hono": "^4.13",
 		"zod": "^4"
 	}

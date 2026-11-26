@@ -13,41 +13,53 @@ import {
 	createProject,
 	deleteIssue,
 	destroySession,
+	etagOf,
+	fail,
 	getIssue,
 	getMe,
 	listActivities,
 	listApiTokens,
 	listComments,
 	listProjects,
-	loadIssue,
-	loadIssueById,
 	login,
 	moveIssue,
 	needsSetup,
 	pageIssues,
 	parse,
+	parseEtag,
 	projectDetail,
-	refOf,
 	rejectPlan,
 	resolveSession,
 	resolveToken,
 	returnReport,
 	revokeApiToken,
 	setupFirstAdmin,
+	sha256,
 	TasukiError,
 	updateCriteria,
 	updateIssue,
 	updateProject,
 } from "@tasuki/core";
 import type { Db } from "@tasuki/db";
+import {
+	answerInput,
+	commentInput,
+	completeInput,
+	inviteAcceptInput,
+	listQuery,
+	loginInput,
+	moveInput,
+	noteBody,
+	optNoteBody,
+} from "@tasuki/schema";
 import { type Context, Hono } from "hono";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
-import { streamSSE } from "hono/streaming";
-import { z } from "zod";
+import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import { createEvents } from "./events";
 
+type Cred = { kind: "session" | "token"; hash: string };
 type Env = {
-	Variables: { ctx: Ctx; session?: string };
+	Variables: { ctx: Ctx; session?: string; cred: Cred; ip: string };
 	Bindings: { ip?: string };
 };
 type C = Context<Env>;
@@ -55,22 +67,13 @@ type C = Context<Env>;
 const SESSION = "tasuki_session";
 const CSRF = "tasuki_csrf";
 const MONTH = 30 * 86_400;
+const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 const PUBLIC = new Set([
 	"/api/v1/setup/status",
 	"/api/v1/setup",
 	"/api/v1/auth/login",
 	"/api/v1/invites/accept",
 ]);
-
-class ApiError extends Error {
-	constructor(
-		public status: number,
-		public code: string,
-		message: string,
-	) {
-		super(message);
-	}
-}
 
 const TITLES: Record<number, string> = {
 	400: "Bad Request",
@@ -101,8 +104,7 @@ const problem = (status: number, code: string, detail: string) =>
 	);
 
 /** Per-session CSRF value, derived from the session token (no server secret needed). */
-const csrfOf = (session: string) =>
-	new Bun.CryptoHasher("sha256").update(`csrf:${session}`).digest("hex");
+const csrfOf = (session: string) => sha256(`csrf:${session}`);
 
 /**
  * Fixed-window counter per key.
@@ -110,53 +112,33 @@ const csrfOf = (session: string) =>
  */
 function rateLimiter(max: number, windowMs = 60_000) {
 	const hits = new Map<string, { n: number; reset: number }>();
+	setInterval(() => {
+		const now = Date.now();
+		for (const [k, e] of hits) if (e.reset <= now) hits.delete(k);
+	}, 60_000).unref();
 	const live = (k: string) => {
 		const e = hits.get(k);
 		return e && e.reset > Date.now() ? e : undefined;
 	};
 	return {
-		blocked: (k: string) => (live(k)?.n ?? 0) >= max,
-		hit(k: string) {
-			const e = live(k);
-			if (e) return void e.n++;
-			if (hits.size > 10_000)
-				for (const [key] of hits) if (!live(key)) hits.delete(key);
-			hits.set(k, { n: 1, reset: Date.now() + windowMs });
+		blocked: (...keys: string[]) => keys.some((k) => (live(k)?.n ?? 0) >= max),
+		hit(...keys: string[]) {
+			for (const k of keys) {
+				const e = live(k);
+				if (e) e.n++;
+				else hits.set(k, { n: 1, reset: Date.now() + windowMs });
+			}
 		},
 	};
 }
 
-const json = async (c: C, optional = false): Promise<unknown> => {
-	try {
-		return await c.req.json();
-	} catch {
-		if (optional) return {};
-		throw new TasukiError("invalid", "request body must be JSON");
-	}
-};
-
-const noteBody = z.object({ note: z.string() });
-const optNoteBody = z.object({ note: z.string().optional() });
-const moveBody = z.object({
-	statusId: z.string(),
-	rank: z.string().optional(),
-});
-const completeBody = z.object({
-	statusId: z.string().optional(),
-	rank: z.string().optional(),
-});
-const answerBody = z.object({ answerMd: z.string() });
-const commentBody = z.object({ bodyMd: z.string() });
-const loginBody = z.object({ email: z.string(), password: z.string() });
-const listQuery = z.object({
-	q: z.string().default(""),
-	cursor: z.coerce.number().int().min(0).optional(),
-	limit: z.coerce.number().int().min(1).max(200).optional(),
-});
+const json = (c: C): Promise<unknown> =>
+	c.req.json().catch(() => fail("invalid", "request body must be JSON"));
+const jsonOrEmpty = (c: C): Promise<unknown> => c.req.json().catch(() => ({}));
 
 export function createApp(
 	db: Db,
-	opts: { baseUrl: string; rateLimit?: number },
+	opts: { baseUrl: string; rateLimit?: number; trustProxy?: boolean },
 ) {
 	const baseUrl = opts.baseUrl.replace(/\/$/, "");
 	const secure = baseUrl.startsWith("https:");
@@ -165,23 +147,39 @@ export function createApp(
 	const app = new Hono<Env>();
 	const api = new Hono<Env>();
 
+	// X-Forwarded-For is client-controlled: only the proxy-appended (last) entry is
+	// believable, and only when the operator says a proxy is in front.
 	const ipOf = (c: C) =>
-		c.req.header("x-forwarded-for")?.split(",")[0]?.trim() ||
+		(opts.trustProxy
+			? c.req.header("x-forwarded-for")?.split(",").at(-1)?.trim()
+			: undefined) ||
 		c.env?.ip ||
 		"local";
-	const tooMany = () => new ApiError(429, "rate_limited", "too many attempts");
+	const tooMany = () => new TasukiError("rate_limited", "too many attempts");
 	const setCookies = (c: C, session: string) => {
 		const base = { sameSite: "Lax", secure, path: "/", maxAge: MONTH } as const;
 		setCookie(c, SESSION, session, { ...base, httpOnly: true });
 		setCookie(c, CSRF, csrfOf(session), { ...base, httpOnly: false });
 	};
 	const ctxOf = (c: C) => c.get("ctx");
-	const announce = (c: C, type: string, ref: string) =>
-		events.publish(type, loadIssue(ctxOf(c), ref).project.id, ref);
+
+	/** `:ref` + JSON body → core. 204 when core returns nothing. */
+	const act =
+		(
+			fn: (ctx: Ctx, ref: string, body: unknown) => unknown,
+			o: { status?: 201; emptyBody?: true } = {},
+		) =>
+		async (c: C) => {
+			const r = fn(
+				ctxOf(c),
+				c.req.param("ref") ?? "",
+				await (o.emptyBody ? jsonOrEmpty(c) : json(c)),
+			);
+			return r === undefined ? c.body(null, 204) : c.json(r, o.status ?? 200);
+		};
 
 	app.onError((e) => {
-		if (e instanceof TasukiError || e instanceof ApiError)
-			return problem(e.status, e.code, e.message);
+		if (e instanceof TasukiError) return problem(e.status, e.code, e.message);
 		console.error(e);
 		return problem(500, "internal", "internal server error");
 	});
@@ -189,13 +187,15 @@ export function createApp(
 	app.get("/health", (c) => c.json({ ok: true }));
 
 	api.use("*", async (c, next) => {
+		const ip = ipOf(c);
+		c.set("ip", ip);
 		if (PUBLIC.has(c.req.path)) return next();
 		const bearer = /^Bearer\s+(\S+)$/i.exec(
 			c.req.header("authorization") ?? "",
 		);
 		let actor: Actor | null = null;
 		if (bearer) {
-			if (limiter.blocked(ipOf(c))) throw tooMany();
+			if (limiter.blocked(ip)) throw tooMany();
 			const client = (c.req.header("x-tasuki-client") ?? "")
 				.replace(/[^\w.-]/g, "")
 				.slice(0, 40);
@@ -204,20 +204,24 @@ export function createApp(
 				bearer[1] ?? "",
 				client ? `mcp:${client}` : "cli",
 			);
-			if (!actor) limiter.hit(ipOf(c));
+			if (!actor) limiter.hit(ip);
+			else c.set("cred", { kind: "token", hash: sha256(bearer[1] ?? "") });
 		} else {
 			const session = getCookie(c, SESSION);
 			actor = session ? resolveSession(db, session) : null;
 			if (session && actor) {
 				c.set("session", session);
-				const safe = ["GET", "HEAD", "OPTIONS"].includes(c.req.method);
-				if (!safe && c.req.header("x-tasuki-csrf") !== csrfOf(session))
-					throw new ApiError(403, "csrf", "missing or invalid X-Tasuki-CSRF");
+				c.set("cred", { kind: "session", hash: sha256(session) });
+				if (
+					!SAFE.has(c.req.method) &&
+					c.req.header("x-tasuki-csrf") !== csrfOf(session)
+				)
+					throw new TasukiError("csrf", "missing or invalid X-Tasuki-CSRF");
 			}
 		}
 		if (!actor)
-			throw new ApiError(401, "unauthorized", "authentication required");
-		c.set("ctx", { db, actor });
+			throw new TasukiError("unauthorized", "authentication required");
+		c.set("ctx", { db, actor, emit: events.publish });
 		return next();
 	});
 
@@ -231,22 +235,26 @@ export function createApp(
 		);
 	});
 	api.post("/auth/login", async (c) => {
-		if (limiter.blocked(ipOf(c))) throw tooMany();
-		const b = loginBody.safeParse(await json(c));
-		const session = b.success
-			? await login(db, b.data.email, b.data.password)
-			: null;
-		const actor = session ? resolveSession(db, session) : null;
-		if (!session || !actor) {
-			limiter.hit(ipOf(c));
-			throw new ApiError(401, "unauthorized", "invalid email or password");
+		const b = loginInput.safeParse(await json(c));
+		// also count per account, so rotating IPs cannot brute-force one email
+		const keys = b.success
+			? [c.get("ip"), `acct:${b.data.email.trim().toLowerCase()}`]
+			: [c.get("ip")];
+		if (limiter.blocked(...keys)) throw tooMany();
+		const r = b.success ? await login(db, b.data.email, b.data.password) : null;
+		if (!r) {
+			limiter.hit(...keys);
+			throw new TasukiError("unauthorized", "invalid email or password");
 		}
-		setCookies(c, session);
-		return c.json(getMe({ db, actor }));
+		setCookies(c, r.session);
+		return c.json(r.user);
 	});
 	api.post("/auth/logout", (c) => {
 		const s = c.get("session");
-		if (s) destroySession(db, s);
+		if (s) {
+			destroySession(db, s);
+			events.drop(c.get("cred").hash);
+		}
 		deleteCookie(c, SESSION, { path: "/" });
 		deleteCookie(c, CSRF, { path: "/" });
 		return c.body(null, 204);
@@ -256,8 +264,8 @@ export function createApp(
 		return c.json({ ...r, url: `${baseUrl}/invite/${r.token}` }, 201);
 	});
 	api.post("/invites/accept", async (c) => {
-		const { token, ...rest } = (await json(c)) as Record<string, unknown>;
-		const u = await acceptInvite(db, String(token ?? ""), rest);
+		const { token, ...rest } = parse(inviteAcceptInput, await json(c));
+		const u = await acceptInvite(db, token, rest);
 		return c.json({ id: u.id, email: u.email, name: u.name }, 201);
 	});
 
@@ -271,11 +279,7 @@ export function createApp(
 	);
 	api.get("/me/tokens", (c) => c.json(listApiTokens(ctxOf(c))));
 	api.post("/me/tokens", async (c) => {
-		const b = (await json(c)) as Record<string, unknown>;
-		const r = createApiToken(ctxOf(c), {
-			...b,
-			expiresAt: b.expiresAt ? new Date(String(b.expiresAt)) : undefined,
-		});
+		const r = createApiToken(ctxOf(c), await json(c));
 		return c.json(
 			{
 				...r,
@@ -285,7 +289,7 @@ export function createApp(
 		);
 	});
 	api.delete("/me/tokens/:id", (c) => {
-		revokeApiToken(ctxOf(c), c.req.param("id"));
+		events.drop(revokeApiToken(ctxOf(c), c.req.param("id")));
 		return c.body(null, 204);
 	});
 
@@ -301,136 +305,107 @@ export function createApp(
 		c.json(updateProject(ctxOf(c), c.req.param("key"), await json(c))),
 	);
 	api.get("/projects/:key/issues", (c) => {
-		const key = c.req.param("key");
 		const q = parse(listQuery, c.req.query());
-		const page = pageIssues(ctxOf(c), key, q.q, q);
-		return c.json({
-			items: page.items.map((i) => ({
-				...i,
-				ref: refOf(key.toUpperCase(), i.number),
-			})),
-			nextCursor: page.nextCursor,
-		});
+		return c.json(pageIssues(ctxOf(c), c.req.param("key"), q.q, q));
 	});
-	api.post("/projects/:key/issues", async (c) => {
-		const key = c.req.param("key").toUpperCase();
-		const i = createIssue(ctxOf(c), key, await json(c));
-		const ref = refOf(key, i.number);
-		events.publish("issue.created", i.projectId, ref);
-		return c.json({ ...i, ref }, 201);
-	});
+	api.post("/projects/:key/issues", async (c) =>
+		c.json(createIssue(ctxOf(c), c.req.param("key"), await json(c)), 201),
+	);
 
 	// --- issues ---
-	const etag = (d: Date) => `"${d.getTime()}"`;
-	api.post("/issues/bulk", async (c) => {
-		const refs = bulkUpdate(ctxOf(c), await json(c));
-		for (const r of refs) announce(c, "issue.updated", r);
-		return c.json({ refs });
-	});
+	api.post("/issues/bulk", async (c) =>
+		c.json({ refs: bulkUpdate(ctxOf(c), await json(c)) }),
+	);
 	api.get("/issues/:ref", (c) => {
 		const r = getIssue(ctxOf(c), c.req.param("ref"));
-		c.header("ETag", etag(r.issue.updatedAt));
+		c.header("ETag", etagOf(r.issue));
 		return c.json(r);
 	});
 	api.patch("/issues/:ref", async (c) => {
-		const ref = c.req.param("ref");
-		const inm = c.req.header("if-match");
-		const m = inm === undefined ? null : /^(?:W\/)?"(\d+)"$/.exec(inm);
-		if (inm !== undefined && !m)
-			throw new TasukiError("invalid", "If-Match must be an ETag from GET");
-		const i = updateIssue(ctxOf(c), ref, await json(c), {
-			ifMatch: m ? Number(m[1]) : undefined,
+		const i = updateIssue(ctxOf(c), c.req.param("ref"), await json(c), {
+			ifMatch: parseEtag(c.req.header("if-match")),
 		});
-		const l = loadIssue(ctxOf(c), ref);
-		events.publish("issue.updated", l.project.id, l.ref);
-		c.header("ETag", etag(i.updatedAt));
-		return c.json({ ...i, ref: l.ref });
+		c.header("ETag", etagOf(i));
+		return c.json(i);
 	});
 	api.delete("/issues/:ref", (c) => {
-		const l = loadIssue(ctxOf(c), c.req.param("ref"));
-		deleteIssue(ctxOf(c), l.ref);
-		events.publish("issue.deleted", l.project.id, l.ref);
+		deleteIssue(ctxOf(c), c.req.param("ref"));
 		return c.body(null, 204);
 	});
-	api.post("/issues/:ref/move", async (c) => {
-		const ref = c.req.param("ref");
-		moveIssue(ctxOf(c), ref, parse(moveBody, await json(c)));
-		announce(c, "issue.moved", ref);
-		return c.body(null, 204);
-	});
+	api.post(
+		"/issues/:ref/move",
+		act((x, ref, b) => moveIssue(x, ref, parse(moveInput, b))),
+	);
 	api.get("/issues/:ref/comments", (c) =>
 		c.json(listComments(ctxOf(c), c.req.param("ref"))),
 	);
-	api.post("/issues/:ref/comments", async (c) => {
-		const ref = c.req.param("ref");
-		const { bodyMd } = parse(commentBody, await json(c));
-		const row = addComment(ctxOf(c), ref, bodyMd);
-		announce(c, "issue.commented", ref);
-		return c.json(row, 201);
-	});
+	api.post(
+		"/issues/:ref/comments",
+		act((x, ref, b) => addComment(x, ref, parse(commentInput, b).bodyMd), {
+			status: 201,
+		}),
+	);
 	api.get("/issues/:ref/activities", (c) =>
 		c.json(listActivities(ctxOf(c), c.req.param("ref"))),
 	);
 
 	// --- workflow (human gates: core rejects token actors) ---
-	api.post("/issues/:ref/plan/approve", async (c) => {
-		const ref = c.req.param("ref");
-		const { note } = parse(optNoteBody, await json(c, true));
-		const plan = approvePlan(ctxOf(c), ref, note);
-		announce(c, "plan.approved", ref);
-		return c.json(plan);
-	});
-	api.post("/issues/:ref/plan/reject", async (c) => {
-		const ref = c.req.param("ref");
-		const plan = rejectPlan(ctxOf(c), ref, parse(noteBody, await json(c)).note);
-		announce(c, "plan.rejected", ref);
-		return c.json(plan);
-	});
-	const finish = async (c: C, type: string) => {
-		const ref = c.req.param("ref") ?? "";
-		completeIssue(ctxOf(c), ref, parse(completeBody, await json(c, true)));
-		announce(c, type, ref);
-		return c.body(null, 204);
-	};
-	api.post("/issues/:ref/report/accept", (c) => finish(c, "report.accepted"));
-	api.post("/issues/:ref/complete", (c) => finish(c, "issue.completed"));
-	api.post("/issues/:ref/report/return", async (c) => {
-		const ref = c.req.param("ref");
-		returnReport(ctxOf(c), ref, parse(noteBody, await json(c)).note);
-		announce(c, "report.returned", ref);
-		return c.body(null, 204);
-	});
-	api.put("/issues/:ref/criteria", async (c) => {
-		const ref = c.req.param("ref");
-		const r = updateCriteria(ctxOf(c), ref, await json(c));
-		announce(c, "criteria.updated", ref);
-		return c.json(r);
-	});
-	api.post("/questions/:id/answer", async (c) => {
-		const q = answerQuestion(
-			ctxOf(c),
-			c.req.param("id"),
-			parse(answerBody, await json(c)).answerMd,
-		);
-		const l = loadIssueById(ctxOf(c), q.issueId);
-		events.publish("question.answered", l.project.id, l.ref);
-		return c.json(q);
-	});
-
-	// --- SSE ---
-	api.get("/events", (c) =>
-		streamSSE(c, async (stream) => {
-			const off = events.subscribe(ctxOf(c), (e) => {
-				stream.writeSSE({ event: e.type, data: JSON.stringify(e) });
-			});
-			stream.onAbort(off);
-			await stream.writeSSE({ event: "ready", data: "{}" });
-			while (!stream.aborted) {
-				await stream.sleep(25_000);
-				await stream.writeSSE({ event: "ping", data: "" });
-			}
+	api.post(
+		"/issues/:ref/plan/approve",
+		act((x, ref, b) => approvePlan(x, ref, parse(optNoteBody, b).note), {
+			emptyBody: true,
 		}),
 	);
+	api.post(
+		"/issues/:ref/plan/reject",
+		act((x, ref, b) => rejectPlan(x, ref, parse(noteBody, b).note)),
+	);
+	api.post(
+		"/issues/:ref/complete",
+		act((x, ref, b) => completeIssue(x, ref, parse(completeInput, b)), {
+			emptyBody: true,
+		}),
+	);
+	api.post(
+		"/issues/:ref/report/return",
+		act((x, ref, b) => returnReport(x, ref, parse(noteBody, b).note)),
+	);
+	api.put(
+		"/issues/:ref/criteria",
+		act((x, ref, b) => updateCriteria(x, ref, b)),
+	);
+	api.post("/questions/:id/answer", async (c) =>
+		c.json(
+			answerQuestion(
+				ctxOf(c),
+				c.req.param("id"),
+				parse(answerInput, await json(c)).answerMd,
+			),
+		),
+	);
+
+	// --- SSE ---
+	api.get("/events", (c) => {
+		let stream: SSEStreamingApi | undefined;
+		const sub = events.subscribe(
+			ctxOf(c),
+			c.get("cred"),
+			(e) => void stream?.writeSSE({ event: e.type, data: JSON.stringify(e) }),
+			() => stream?.abort(),
+		);
+		if (!sub)
+			throw new TasukiError("rate_limited", "too many open event streams");
+		return streamSSE(c, async (s) => {
+			stream = s;
+			s.onAbort(sub.off);
+			await s.writeSSE({ event: "ready", data: "{}" });
+			while (!s.aborted) {
+				await s.sleep(25_000);
+				if (s.aborted || !sub.ok()) break;
+				await s.writeSSE({ event: "ping", data: "" });
+			}
+		});
+	});
 
 	app.route("/api/v1", api);
 	return app;

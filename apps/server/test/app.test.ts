@@ -105,7 +105,7 @@ describe("auth & errors", () => {
 	});
 
 	test("rate limits repeated login and bad-token failures", async () => {
-		const h = harness({ rateLimit: 3 });
+		const h = harness({ rateLimit: 3, trustProxy: true });
 		await h.setup();
 		for (let i = 0; i < 3; i++)
 			expect(
@@ -126,6 +126,42 @@ describe("auth & errors", () => {
 			(await h.call("GET", "/me", { bearer: "tsk_bad", headers: other }))
 				.status,
 		).toBe(429);
+	});
+});
+
+describe("rate limit: client address", () => {
+	const login = (h: ReturnType<typeof harness>, email: string, ip: string) =>
+		h.call("POST", "/auth/login", {
+			body: { email, password: "badbadbad" },
+			headers: { "x-forwarded-for": ip },
+		});
+
+	test("a spoofed X-Forwarded-For does not bypass the limit when proxy trust is off", async () => {
+		const h = harness({ rateLimit: 3 });
+		for (let i = 0; i < 3; i++)
+			expect((await login(h, `u${i}@example.com`, `1.1.1.${i}`)).status).toBe(
+				401,
+			);
+		expect((await login(h, "u9@example.com", "8.8.8.8")).status).toBe(429);
+	});
+
+	test("with proxy trust the last XFF entry is the client; failures also count per account", async () => {
+		const h = harness({ rateLimit: 3, trustProxy: true });
+		// client-supplied first hop is ignored, the proxy-appended last one counts
+		for (let i = 0; i < 3; i++)
+			expect(
+				(await login(h, `u${i}@example.com`, `6.6.6.${i}, 7.7.7.7`)).status,
+			).toBe(401);
+		expect((await login(h, "x@example.com", "5.5.5.5, 7.7.7.7")).status).toBe(
+			429,
+		);
+		// rotating IPs against one account is stopped by the per-email counter
+		for (let i = 0; i < 3; i++)
+			expect((await login(h, "Victim@Example.com", `2.2.2.${i}`)).status).toBe(
+				401,
+			);
+		expect((await login(h, "victim@example.com", "2.2.2.99")).status).toBe(429);
+		expect((await login(h, "other@example.com", "2.2.2.99")).status).toBe(401);
 	});
 });
 
@@ -471,7 +507,10 @@ describe("human gates over REST", () => {
 				.status,
 		).toBe(204);
 		submitReport(ai, i.ref, { summaryMd: "s2", decisionsMd: "d" });
-		const acc = await a.req("POST", `/issues/${i.ref}/report/accept`);
+		expect((await a.req("POST", `/issues/${i.ref}/report/accept`)).status).toBe(
+			404,
+		);
+		const acc = await a.req("POST", `/issues/${i.ref}/complete`);
 		expect(acc.status).toBe(204);
 		expect(
 			(await (await a.req("GET", `/issues/${i.ref}`)).json()).category,
@@ -519,6 +558,18 @@ describe("SSE", () => {
 				return buf;
 			},
 			close: () => rd.cancel(),
+			/** True once the server has ended the stream. */
+			async ended(ms = 1500) {
+				const end = Date.now() + ms;
+				while (Date.now() < end) {
+					const r = await Promise.race([
+						rd.read(),
+						new Promise<null>((ok) => setTimeout(() => ok(null), 100)),
+					]);
+					if (r?.done) return true;
+				}
+				return false;
+			},
 		};
 	}
 
@@ -546,6 +597,43 @@ describe("SSE", () => {
 		expect(got).toContain('"ref":"WEB-1"');
 		expect(got).toContain('"projectId"');
 		expect(got).not.toContain("SEC-1");
+	});
+
+	test("logout and token revoke close that credential's stream at once", async () => {
+		const h = harness();
+		const a = await h.setup();
+		await a.req("POST", "/projects", key("WEB"));
+		const bob = await h.addUser(a, "bob");
+		await h.member(a, bob.id, "WEB");
+		const tok = await (
+			await bob.req("POST", "/me/tokens", { name: "t", scopes: ["read"] })
+		).json();
+		const byToken = await reader(
+			await h.call("GET", "/events", { bearer: tok.token }),
+		);
+		const bySession = await reader(await bob.req("GET", "/events"));
+		await byToken.until((b) => b.includes("event: ready"));
+		await bySession.until((b) => b.includes("event: ready"));
+
+		await bob.req("DELETE", `/me/tokens/${tok.id}`);
+		expect(await byToken.ended()).toBe(true);
+		await bob.req("POST", "/auth/logout");
+		expect(await bySession.ended()).toBe(true);
+	});
+
+	test("at most 5 streams per user, the 6th is a 429 problem", async () => {
+		const h = harness();
+		const a = await h.setup();
+		const open = [];
+		for (let i = 0; i < 5; i++) {
+			const r = await a.req("GET", "/events");
+			expect(r.status).toBe(200);
+			open.push(await reader(r));
+		}
+		const sixth = await a.req("GET", "/events");
+		expect(sixth.status).toBe(429);
+		expect((await sixth.json()).code).toBe("rate_limited");
+		for (const o of open) await o.close();
 	});
 
 	test("events endpoint needs auth", async () => {

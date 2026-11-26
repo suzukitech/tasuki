@@ -111,12 +111,9 @@ describe("sessions, invites, setup", () => {
 		const clk = { now: () => clock.t };
 		expect(await login(db, "root@example.com", "bad", clk)).toBeNull();
 		expect(await login(db, "nobody@example.com", "password1", clk)).toBeNull();
-		const s = (await login(
-			db,
-			" ROOT@example.com",
-			"password1",
-			clk,
-		)) as string;
+		const r = await login(db, " ROOT@example.com", "password1", clk);
+		expect(r?.user).toMatchObject({ email: "root@example.com" });
+		const s = r?.session as string;
 		expect(JSON.stringify(db.select().from(sessions).get())).not.toContain(s);
 		expect(resolveSession(db, s, clk)).toEqual({
 			userId: admin.id,

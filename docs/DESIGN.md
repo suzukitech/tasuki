@@ -356,11 +356,13 @@ Web UI、CLI、外部連携はすべて `/api/v1` を使います。認証はWeb
 - 更新は `If-Match`（`updated_at` ベースのETag）で楽観ロック。人とAIが同時に同じチケットを変えても上書きしない。`GET /issues/:ref` が `ETag: "<updatedAtのms>"` を返し、`PATCH` の `If-Match` が一致しなければ **412 Precondition Failed**（`code: "precondition"`）。
 - エラーは RFC 9457（Problem Details）形式（`application/problem+json`: `type` / `title` / `status` / `detail` ＋ `code`）。
 - チケット一覧は `?q=`（フィルタ書式）＋ `?cursor=<チケット番号>&limit=`（番号の降順）。応答は `{items, nextCursor}`。
-- 追加ルート（Web UI用）: `GET /health`、`GET /setup/status`、`POST /setup`、`POST /auth/login`、`POST /auth/logout`、`POST /invites`（管理者）、`POST /invites/accept`、`GET /me`、`GET /me/tokens`、`DELETE /me/tokens/:id`、ワークフロー操作 `POST /issues/:ref/plan/approve`・`plan/reject`・`report/accept`・`report/return`・`complete`、`PUT /issues/:ref/criteria`、`POST /questions/:id/answer`。これらの人間ゲートはセッションのみ通る（トークンは409 `gate`）。
+- 追加ルート（Web UI用）: `GET /health`、`GET /setup/status`、`POST /setup`、`POST /auth/login`、`POST /auth/logout`、`POST /invites`（管理者）、`POST /invites/accept`、`GET /me`、`GET /me/tokens`、`DELETE /me/tokens/:id`、ワークフロー操作 `POST /issues/:ref/plan/approve`・`plan/reject`・`report/return`・`complete`（AIフローの結果承認も `complete`）、`PUT /issues/:ref/criteria`、`POST /questions/:id/answer`。これらの人間ゲートはセッションのみ通る（トークンは409 `gate`）。
 - `POST /me/tokens` は平文トークンを1回だけ返し、そのまま貼れる `claudeMcpAdd`（`claude mcp add --transport http ...`）も返す。
 - CSRF: Cookie認証の更新系リクエストは `X-Tasuki-CSRF` ヘッダが必要。値はセッションごとに決まり、ログイン時に非HttpOnlyの `tasuki_csrf` Cookieで渡す（ダブルサブミット）。Bearerトークンは不要。
-- ログイン失敗とトークン認証失敗はIPごとに1分10回まででレート制限（429）。単一プロセスのメモリ内カウンタ。
-- `GET /events`（SSE）はプロセス内pub/sub。購読者は読める権限のあるプロジェクトのイベントだけ受け取る。25秒ごとにハートビート。
+- ログイン失敗とトークン認証失敗はIPごとに1分10回まででレート制限（429）。ログイン失敗はメールアドレス（小文字化）ごとにも数え、IPを変えても1アカウントへの総当たりはできない。IPは接続元アドレス。`X-Forwarded-For` は偽装できるため、環境変数 `TASUKI_TRUST_PROXY=1` のときだけ信用する（リバースプロキシ1段を想定し、プロキシが付け足した末尾の値を使う）。単一プロセスのメモリ内カウンタで、期限切れは60秒ごとに掃除する。
+- `GET /events`（SSE）はプロセス内pub/sub。購読者は読める権限のあるプロジェクトのイベントだけ受け取る（権限は購読者ごとに30秒キャッシュ）。25秒ごとにハートビートし、そのたびに接続に使ったセッション/トークンが生きているか（存在・未失効・期限内）を確かめ、死んでいれば切る。ログアウトとトークン失効は、その認証情報のストリームをその場で閉じる。1ユーザー同時5本まで（超えると429）。書き込みで例外が出た購読者は外す。
+- イベントは core が発行する。チケットを変える関数（作成・更新・削除・移動・コメント・ワークフロー操作・一括更新）は `ctx.emit` に向けてイベントを記録し、最外のトランザクションがコミットした後にだけ発火する（ロールバックでは発火しない）。一括更新はチケットごとに1回 `issue.updated`。サーバーは `ctx.emit` に購読の `publish` を渡すだけで、ルートごとの発火はしない。
+- チケットのDTOには `ref`（`WEB-12`）を含める。一覧は本文（`bodyMd`）を含まない列だけ返す。コメントと履歴は新しい500件までを古い順に返す。
 - `TASUKI_SECRET` はサーバー側のHMAC署名などが必要になるまで生成しない（セッション・トークン・CSRFはすべてランダム値＋DBのハッシュで足り、秘密鍵を使わない）。
 - OpenAPI定義をZodから生成し、`/api/docs` で公開する。**ドキュメントのフェーズまで保留**（Phase 4では作らない）。
 
@@ -430,7 +432,7 @@ npx @<ユーザー名>/tasuki serve --data ./tasuki-data
 GitHub ReleasesからOSごとの実行ファイルをダウンロードして、`./tasuki serve` で動かすこともできます。npmパッケージは、OSごとの実行ファイルを中に入れた薄い入れ物にします（esbuildやCodex CLIと同じ方式）。こうすると、`npx` でもNode.jsのバージョンに左右されずに動きます。
 
 - `/data` に SQLiteファイルと添付ファイルを置く。バックアップは `tasuki backup` でオンラインのスナップショットを取る。
-- 設定は環境変数だけ（`TASUKI_BASE_URL`、`TASUKI_SECRET` など）。未指定なら初回起動時に生成して `/data` に保存。
+- 設定は環境変数だけ（`TASUKI_BASE_URL`、`TASUKI_SECRET`、`TASUKI_TRUST_PROXY` など）。`TASUKI_TRUST_PROXY=1` はリバースプロキシの背後で `X-Forwarded-For` をレート制限のIPに使う（既定は使わない）。未指定なら初回起動時に生成して `/data` に保存。
 - マイグレーションは起動時に自動実行。実行前に自動バックアップを取る。
 - HTTPSは利用者側のリバースプロキシ（Caddyなど）に任せ、READMEに例を載せる。
 - 配布物: npmパッケージ `tasuki`、GitHub Container Registryのイメージ（amd64 / arm64）。GitHub Actionsでタグを打つと両方を公開。

@@ -5,16 +5,12 @@ import {
 	projectMembers,
 	projects,
 	statuses,
+	users,
 } from "@tasuki/db";
 import { createProjectInput } from "@tasuki/schema";
-import { asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { atomic, type Ctx, fail, parse } from "./ctx";
-import {
-	projectRole,
-	type Role,
-	requireProjectRole,
-	requireScope,
-} from "./permissions";
+import { type Role, requireProjectRole, requireScope } from "./permissions";
 
 export function createProject(ctx: Ctx, input: unknown) {
 	const inp = parse(createProjectInput, input);
@@ -74,19 +70,26 @@ export function setMember(
 		.run();
 }
 
-/** Projects the actor can read (token project restriction applies). */
+/** Projects the actor can read (token project restriction applies). One query. */
 export function listProjects(ctx: Ctx) {
 	requireScope(ctx, "read");
 	const only = ctx.actor.token?.projectIds;
+	// system admins are managers everywhere; others need a membership row
+	const role = sql<Role | null>`case when ${users.role} = 'admin' then 'manager' else ${projectMembers.role} end`;
 	return ctx.db
-		.select()
-		.from(projects)
+		.select({ project: projects, role })
+		.from(users)
+		.innerJoin(projects, only ? inArray(projects.id, only) : sql`true`)
+		.leftJoin(
+			projectMembers,
+			and(
+				eq(projectMembers.projectId, projects.id),
+				eq(projectMembers.userId, users.id),
+			),
+		)
+		.where(and(eq(users.id, ctx.actor.userId), sql`${role} is not null`))
 		.all()
-		.filter((p) => !only || only.includes(p.id))
-		.flatMap((p) => {
-			const role = projectRole(ctx, p.id);
-			return role ? [{ ...p, role }] : [];
-		});
+		.map((r) => ({ ...r.project, role: r.role as Role }));
 }
 
 const updateProjectInput = createProjectInput

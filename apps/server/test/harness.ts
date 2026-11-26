@@ -13,11 +13,14 @@ type Init = {
 };
 
 /** App over an in-memory db with a request helper. */
-export function harness(opts: { baseUrl?: string; rateLimit?: number } = {}) {
+export function harness(
+	opts: { baseUrl?: string; rateLimit?: number; trustProxy?: boolean } = {},
+) {
 	const db = openDb(":memory:");
 	const app = createApp(db, {
 		baseUrl: opts.baseUrl ?? "http://localhost:3000",
 		rateLimit: opts.rateLimit,
+		trustProxy: opts.trustProxy,
 	});
 	const call = (method: string, path: string, i: Init = {}) =>
 		app.request(`/api/v1${path}`, {

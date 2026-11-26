@@ -4,11 +4,12 @@ import { openDb } from "@tasuki/db";
 import { createApp } from "./app";
 
 const data = process.env.TASUKI_DATA ?? "./tasuki-data";
-const baseUrl = (
-	process.env.TASUKI_BASE_URL ?? "http://localhost:3000"
-).replace(/\/$/, "");
+const baseUrl = process.env.TASUKI_BASE_URL ?? "http://localhost:3000";
 mkdirSync(data, { recursive: true });
-const app = createApp(openDb(join(data, "tasuki.db")), { baseUrl });
+const app = createApp(openDb(join(data, "tasuki.db")), {
+	baseUrl,
+	trustProxy: process.env.TASUKI_TRUST_PROXY === "1",
+});
 
 const server = Bun.serve({
 	port: Number(process.env.PORT ?? 3000),

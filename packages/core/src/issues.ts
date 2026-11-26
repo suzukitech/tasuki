@@ -24,12 +24,33 @@ import {
 } from "@tasuki/schema";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
-import { atomic, type Ctx, fail, log, logAll, nowOf, parse } from "./ctx";
+import {
+	atomic,
+	type Ctx,
+	fail,
+	log,
+	logAll,
+	nowOf,
+	parse,
+	record,
+} from "./ctx";
 import { type Role, requireProjectRole, requireSession } from "./permissions";
 import { getProject } from "./projects";
 import { TRANSITIONS } from "./transitions";
 
 export const refOf = (key: string, number: number) => `${key}-${number}`;
+
+/** Optimistic-lock tag: the issue's updatedAt in ms. */
+export const etagOf = (i: { updatedAt: Date }) => `"${i.updatedAt.getTime()}"`;
+
+/** `If-Match` header → updatedAt ms (undefined when absent). */
+export function parseEtag(header: string | undefined) {
+	if (header === undefined) return undefined;
+	const m = /^(?:W\/)?"(\d+)"$/.exec(header);
+	return m
+		? Number(m[1])
+		: fail("invalid", "If-Match must be an ETag from GET");
+}
 
 const issueRow = {
 	issue: issues,
@@ -273,7 +294,9 @@ export function createIssue(ctx: Ctx, projectKey: string, input: unknown) {
 			.get();
 		setLabels(c, project.id, issue.id, names);
 		log(c, issue.id, "created");
-		return issue;
+		const ref = refOf(project.key, issue.number);
+		record(c, "issue.created", project.id, ref);
+		return { ...issue, ref };
 	});
 }
 
@@ -348,7 +371,8 @@ export function updateIssue(
 ) {
 	const inp = parse(updateIssueInput, patch);
 	return atomic(ctx, (c) => {
-		const { issue, project, category } = loadIssue(c, ref, "member");
+		const l = loadIssue(c, ref, "member");
+		const { issue, project, category } = l;
 		if (
 			opts.ifMatch !== undefined &&
 			opts.ifMatch !== issue.updatedAt.getTime()
@@ -381,13 +405,18 @@ export function updateIssue(
 			}
 		}
 		logAll(c, issue.id, acts);
-		return Object.keys(set).length ? patchIssue(c, issue.id, set) : issue;
+		record(c, "issue.updated", project.id, l.ref);
+		const row = Object.keys(set).length ? patchIssue(c, issue.id, set) : issue;
+		return { ...row, ref: l.ref };
 	});
 }
 
 export function deleteIssue(ctx: Ctx, ref: string) {
-	const { issue } = loadIssue(ctx, ref, "manager");
-	ctx.db.delete(issues).where(eq(issues.id, issue.id)).run();
+	atomic(ctx, (c) => {
+		const l = loadIssue(c, ref, "manager");
+		c.db.delete(issues).where(eq(issues.id, l.issue.id)).run();
+		record(c, "issue.deleted", l.project.id, l.ref);
+	});
 }
 
 export function insertComment(c: Ctx, issueId: string, bodyMd: string) {
@@ -407,9 +436,10 @@ export function insertComment(c: Ctx, issueId: string, bodyMd: string) {
 export function addComment(ctx: Ctx, ref: string, bodyMd: string) {
 	const body = parse(noteInput, bodyMd);
 	return atomic(ctx, (c) => {
-		const { issue } = loadIssue(c, ref, "viewer", "write");
+		const { issue, project, ref: r } = loadIssue(c, ref, "viewer", "write");
 		const row = insertComment(c, issue.id, body);
 		log(c, issue.id, "commented");
+		record(c, "issue.commented", project.id, r);
 		return row;
 	});
 }
@@ -440,24 +470,27 @@ export function parseQuickTitle(text: string) {
 	return out;
 }
 
-/** Comments of an issue, oldest first. */
-export function listComments(ctx: Ctx, ref: string) {
+// ponytail: newest 500 only; add cursor paging when an issue's thread outgrows it.
+const THREAD_CAP = 500;
+
+/** The newest THREAD_CAP rows of an issue's comments / activities, oldest first. */
+function thread<T extends typeof comments | typeof activities>(
+	ctx: Ctx,
+	ref: string,
+	t: T,
+) {
 	const { issue } = loadIssue(ctx, ref);
 	return ctx.db
 		.select()
-		.from(comments)
-		.where(eq(comments.issueId, issue.id))
-		.orderBy(asc(comments.createdAt))
-		.all();
+		.from(t as typeof comments)
+		.where(eq(t.issueId, issue.id))
+		.orderBy(desc(t.createdAt), desc(t.id))
+		.limit(THREAD_CAP)
+		.all()
+		.reverse() as T["$inferSelect"][];
 }
 
-/** Change history of an issue, oldest first. */
-export function listActivities(ctx: Ctx, ref: string) {
-	const { issue } = loadIssue(ctx, ref);
-	return ctx.db
-		.select()
-		.from(activities)
-		.where(eq(activities.issueId, issue.id))
-		.orderBy(asc(activities.createdAt))
-		.all();
-}
+export const listComments = (ctx: Ctx, ref: string) =>
+	thread(ctx, ref, comments);
+export const listActivities = (ctx: Ctx, ref: string) =>
+	thread(ctx, ref, activities);
