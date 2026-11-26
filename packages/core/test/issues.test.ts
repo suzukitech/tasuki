@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { activities, issues } from "@tasuki/db";
 import { eq } from "drizzle-orm";
-import { setup } from "./fixture";
 import {
 	addComment,
 	createIssue,
@@ -12,7 +11,8 @@ import {
 	type TasukiError,
 	updateIssue,
 	whoseTurn,
-} from "./index";
+} from "../src/index";
+import { setup } from "./fixture";
 
 const codeOf = (fn: () => unknown) => {
 	try {

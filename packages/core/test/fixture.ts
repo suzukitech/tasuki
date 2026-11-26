@@ -5,7 +5,7 @@ import {
 	createIssue,
 	createProject,
 	setMember,
-} from "./index";
+} from "../src/index";
 
 /** Test fixture: in-memory db, five users, project WEB, a movable clock. */
 export function setup() {

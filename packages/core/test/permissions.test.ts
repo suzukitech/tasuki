@@ -1,5 +1,4 @@
 import { describe, expect, test } from "bun:test";
-import { setup } from "./fixture";
 import {
 	addComment,
 	createIssue,
@@ -11,7 +10,8 @@ import {
 	requireAdmin,
 	TasukiError,
 	updateIssue,
-} from "./index";
+} from "../src/index";
+import { setup } from "./fixture";
 
 const code = (fn: () => unknown) => {
 	try {

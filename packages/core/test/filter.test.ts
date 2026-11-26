@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { statuses } from "@tasuki/db";
-import { setup } from "./fixture";
 import {
 	moveIssue,
 	parseFilter,
 	searchIssues,
 	type TasukiError,
 	updateIssue,
-} from "./index";
+} from "../src/index";
+import { setup } from "./fixture";
 
 const codeOf = (fn: () => unknown) => {
 	try {

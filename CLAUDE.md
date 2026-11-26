@@ -18,6 +18,7 @@ AIネイティブなチケット管理（Redmine の代替）。設計の正本�
 - `packages/db` — Drizzle スキーマ、マイグレーション、シード
 - `packages/core` — ドメインロジック、権限、ワークフロー強制、履歴、フィルタ書式
 - `apps/server`・`apps/web`・`packages/mcp`・`packages/cli` は該当フェーズで追加する
+- テストは各パッケージの `test/` に置く（`src/` に混ぜない）
 
 ## コマンド
 

@@ -1,6 +1,5 @@
 import { describe, expect, test } from "bun:test";
 import { apiTokens, invites, openDb, sessions, users } from "@tasuki/db";
-import { setup } from "./fixture";
 import {
 	acceptInvite,
 	createApiToken,
@@ -14,7 +13,8 @@ import {
 	setupFirstAdmin,
 	type TasukiError,
 	verifyPassword,
-} from "./index";
+} from "../src/index";
+import { setup } from "./fixture";
 
 const codeOf = async (fn: () => unknown) => {
 	try {

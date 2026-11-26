@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { agentSessions, plans, statuses } from "@tasuki/db";
 import { eq } from "drizzle-orm";
-import { setup } from "./fixture";
 import {
 	acceptReport,
 	answerQuestion,
@@ -20,7 +19,8 @@ import {
 	touchLock,
 	updateCriteria,
 	updateIssue,
-} from "./index";
+} from "../src/index";
+import { setup } from "./fixture";
 
 const codeOf = (fn: () => unknown) => {
 	try {
