@@ -6,6 +6,7 @@ import {
 	issues,
 	planCriteria,
 	plans,
+	projects,
 	questions,
 	reports,
 	statuses,
@@ -243,6 +244,20 @@ const slug = (s: string) =>
 		.slice(0, 40)
 		.replace(/-$/, "");
 
+/** The issue's open, unexpired work lock (any holder), if any. */
+const openSession = (c: Ctx, issueId: string) =>
+	c.db
+		.select()
+		.from(agentSessions)
+		.where(
+			and(
+				eq(agentSessions.issueId, issueId),
+				isNull(agentSessions.endedAt),
+				gt(agentSessions.expiresAt, nowOf(c)),
+			),
+		)
+		.get();
+
 /**
  * Take (or extend) the actor's work lock on `l`. Null when someone else holds it.
  * Does not touch the issue's status.
@@ -250,13 +265,7 @@ const slug = (s: string) =>
 function takeLock(c: Ctx, l: Loaded) {
 	const now = nowOf(c);
 	endSessions(c, l.issue.id, "expired", lte(agentSessions.expiresAt, now));
-	const open = c.db
-		.select()
-		.from(agentSessions)
-		.where(
-			and(eq(agentSessions.issueId, l.issue.id), isNull(agentSessions.endedAt)),
-		)
-		.get();
+	const open = openSession(c, l.issue.id);
 	if (open && open.userId !== c.actor.userId) return null;
 	const expiresAt = new Date(now.getTime() + LOCK_MS);
 	return open
@@ -304,7 +313,11 @@ export function claimNext(ctx: Ctx) {
 				asc(issues.number),
 			)
 			.all();
-		for (const r of rows) {
+		// a lock the actor already holds on an eligible issue wins over a new one
+		const held = rows.find(
+			(r) => openSession(c, r.id)?.userId === c.actor.userId,
+		);
+		for (const r of held ? [held, ...rows.filter((x) => x !== held)] : rows) {
 			let l: Loaded;
 			try {
 				l = loadIssueById(c, r.id, "member");
@@ -389,28 +402,65 @@ export function startImplementation(ctx: Ctx, ref: string) {
 export function touchLock(ctx: Ctx, ref: string) {
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
-		const now = nowOf(c);
-		const s = c.db
-			.select()
-			.from(agentSessions)
-			.where(
-				and(
-					eq(agentSessions.issueId, l.issue.id),
-					eq(agentSessions.userId, c.actor.userId),
-					isNull(agentSessions.endedAt),
-					gt(agentSessions.expiresAt, now),
-				),
-			)
-			.get();
-		if (!s)
+		const s = openSession(c, l.issue.id);
+		if (!s || s.userId !== c.actor.userId)
 			return fail("conflict", "no active work lock; call startImplementation");
 		return c.db
 			.update(agentSessions)
-			.set({ expiresAt: new Date(now.getTime() + LOCK_MS) })
+			.set({ expiresAt: new Date(nowOf(c).getTime() + LOCK_MS) })
 			.where(eq(agentSessions.id, s.id))
 			.returning()
 			.get();
 	});
+}
+
+/**
+ * Keep the actor's own work lock on `ref` alive if they hold one. Null when there is
+ * no lock, the ref is malformed / unknown, or the token cannot write; never throws
+ * for those. A single UPDATE of the actor's own row, so no permission lookup is needed.
+ */
+export function extendLockIfHeld(ctx: Ctx, ref: string) {
+	const m = /^([A-Za-z]{2,10})-(\d+)$/.exec(ref.trim());
+	if (!m) return null;
+	if (ctx.actor.auth === "token" && !ctx.actor.token?.scopes.includes("write"))
+		return null;
+	const now = nowOf(ctx);
+	return (
+		ctx.db
+			.update(agentSessions)
+			.set({ expiresAt: new Date(now.getTime() + LOCK_MS) })
+			.where(
+				and(
+					eq(agentSessions.userId, ctx.actor.userId),
+					isNull(agentSessions.endedAt),
+					gt(agentSessions.expiresAt, now),
+					inArray(
+						agentSessions.issueId,
+						ctx.db
+							.select({ id: issues.id })
+							.from(issues)
+							.innerJoin(projects, eq(projects.id, issues.projectId))
+							.where(
+								and(
+									eq(projects.key, (m[1] ?? "").toUpperCase()),
+									eq(issues.number, Number(m[2])),
+								),
+							),
+					),
+				),
+			)
+			.returning()
+			.get() ?? null
+	);
+}
+
+/** The plan the AI should work from: the approved one, else the latest proposed. */
+export function currentPlan<P extends { state: string }>(plans: P[]) {
+	const rev = [...plans].reverse();
+	return (
+		rev.find((p) => p.state === "approved") ??
+		rev.find((p) => p.state === "proposed")
+	);
 }
 
 export function askQuestion(ctx: Ctx, ref: string, bodyMd: string) {

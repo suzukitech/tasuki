@@ -301,7 +301,7 @@ MCPはサーバーに内蔵し、**Streamable HTTP（`https://<host>/mcp`）+ �
 Claude Codeへの追加は次の1行で済むようにします。
 
 ```
-claude mcp add --transport http tasuki https://tasuki.example.com/mcp --header "Authorization: Bearer tsk_xxx"
+claude mcp add --transport http tasuki https://tasuki.example.com/mcp --header "Authorization: Bearer tsk_xxx" --header "X-Tasuki-Client: claude-code"
 ```
 
 | ツール                      | 役割                                                                                                         | 使う段階   |
@@ -334,7 +334,7 @@ claude mcp add --transport http tasuki https://tasuki.example.com/mcp --header "
 - 作業ロックの有効期限は30分で、MCPを呼ぶたびに延長する。AIが止まっても、チケットが抜けなくならない。
 - 計画を提出したら、AIは承認画面のURLを担当者に表示する（ツールの戻り値に含める）。担当者と承認者が同じ人なら、1クリックで承認できる。
 
-**実装メモ（Phase 5）**: `/mcp` はステートレスなStreamable HTTP（リクエストごとにサーバーを作り、セッションIDを持たない。JSON応答）。認証はBearerトークンのみで、Cookieだけのリクエストは401。`GET` / `DELETE` は405。`via` は `mcp:<クライアント名>`（`X-Tasuki-Client`、なければ `mcp:mcp`）。`next_task` は作業ロックだけ取り、状態は変えない。作業ロックの延長は、チケットを指定する全ツール呼び出しで中央処理する。
+**実装メモ（Phase 5）**: `/mcp` はステートレスなStreamable HTTP（リクエストごとにサーバーを作り、セッションIDを持たない。JSON応答）。認証はBearerトークンのみで、Cookieだけのリクエストは401。トークンの照合（不正トークンの回数制限を含む）は本文を読む前に行う。リクエスト本文は、`/api/v1` のJSONと `/mcp` の全体で1MBまで（バイト数で数え、超えたら413 problem+json）。`GET` / `DELETE` は405。`via` は `mcp:<クライアント名>`（`X-Tasuki-Client` ヘッダ。なければ `mcp:mcp`）。MCPの `initialize` の `clientInfo` は読まない（ステートレスなので `tools/call` まで届かないため）。`next_task` は作業ロックだけ取り、状態は変えない。すでに自分が有効なロックを持つ対象のチケットがあれば、新しく取らずそれを先に返す。作業ロックの延長は、チケットを指定する全ツール呼び出しで中央処理する（書き込みスコープがあり、自分のロックがあるときだけ。無ければ何もしない）。ツール内で想定外のエラーが起きたら、詳細はサーバーログだけに出し、AIには「internal error」とだけ返す。
 
 **MCPリソースとプロンプト**: `tasuki://issue/WEB-12` でチケットを参照できるようにします。また、「仕様からチケットを切る」「今日着手すべきものを選ぶ」の2つをプロンプトとして同梱します。
 

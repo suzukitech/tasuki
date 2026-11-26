@@ -137,6 +137,26 @@ describe("tools", () => {
 		expect((exp()?.getTime() as number) - first).toBe(10 * 60_000);
 	});
 
+	test("unexpected errors: logged, generic isError result, no raw message", async () => {
+		const w = await world();
+		w.ai.db = {} as never; // force a non-TasukiError
+		const log = console.error;
+		const seen: unknown[] = [];
+		console.error = (...a: unknown[]) => void seen.push(a);
+		try {
+			const r = await w.call("search_issues", { project: "WEB" });
+			expect(r.isError).toBe(true);
+			expect(r.content[0]?.text).toBe("Error: internal error");
+			expect(seen).toHaveLength(1);
+			await expect(
+				w.client.readResource({ uri: "tasuki://issue/WEB-1" }),
+			).rejects.toThrow(/internal error/);
+			expect(seen).toHaveLength(2);
+		} finally {
+			console.error = log;
+		}
+	});
+
 	test("format json, ask_question, search_issues, comment", async () => {
 		const w = await world();
 		const j = JSON.parse(

@@ -110,6 +110,74 @@ describe("/mcp", () => {
 		expect(noAuth.status).toBe(401);
 	});
 
+	test("clientInfo.name is ignored; X-Tasuki-Client decides via", async () => {
+		const w = await world();
+		await w.mcp(
+			rpc("initialize", {
+				protocolVersion: "2025-06-18",
+				capabilities: {},
+				clientInfo: { name: "sneaky", version: "1" },
+			}),
+		);
+		await w.mcp(
+			rpc("tools/call", {
+				name: "comment",
+				arguments: { ref: "WEB-1", bodyMd: "hi" },
+			}),
+		);
+		const cs = await (await w.a.req("GET", "/issues/WEB-1/comments")).json();
+		expect(cs.map((c: { via: string }) => c.via)).toEqual(["mcp:mcp"]);
+	});
+
+	test("oversized body is 413 problem+json (mcp and REST); small body still fine", async () => {
+		const w = await world();
+		const big = "x".repeat(1_000_001);
+		const r = await w.mcp(big);
+		expect(r.status).toBe(413);
+		expect(r.headers.get("content-type")).toContain("application/problem+json");
+		const rest = await w.h.app.request("/api/v1/projects", {
+			method: "POST",
+			headers: { "content-type": "application/json", cookie: w.a.cookie },
+			body: big,
+		});
+		expect(rest.status).toBe(413);
+		const declared = await w.h.app.request("/mcp", {
+			method: "POST",
+			headers: {
+				...HDRS,
+				authorization: `Bearer ${w.token}`,
+				"content-length": "5000000",
+			},
+			body: "{}",
+		});
+		expect(declared.status).toBe(413);
+	});
+
+	test("bad token with a body: 401 before the body is read, counts toward the limiter", async () => {
+		const h = harness({ rateLimit: 1 });
+		const big = "x".repeat(1_000_001);
+		const hit = () =>
+			h.app.request("/mcp", {
+				method: "POST",
+				headers: { ...HDRS, authorization: "Bearer tsk_nope" },
+				body: big,
+			});
+		expect((await hit()).status).toBe(401); // not 413: auth runs first
+		expect((await hit()).status).toBe(429);
+	});
+
+	test("GET with Accept: text/event-stream is still refused 405", async () => {
+		const w = await world();
+		const r = await w.h.app.request("/mcp", {
+			method: "GET",
+			headers: {
+				authorization: `Bearer ${w.token}`,
+				accept: "text/event-stream",
+			},
+		});
+		expect(r.status).toBe(405);
+	});
+
 	test("bad token is rate limited like REST", async () => {
 		const h = harness({ rateLimit: 2 });
 		const hit = () =>

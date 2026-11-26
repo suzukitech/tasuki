@@ -7,6 +7,7 @@ import {
 	askQuestion,
 	type Ctx,
 	claimNext,
+	extendLockIfHeld,
 	getAnswers,
 	recordEvidence,
 	searchIssues,
@@ -14,11 +15,10 @@ import {
 	submitPlan,
 	submitReport,
 	TasukiError,
-	touchLock,
 } from "@tasuki/core";
 import { evidenceInput, planInput, reportInput } from "@tasuki/schema";
 import { z } from "zod";
-import { briefMd, DATA_NOTE, loadBrief } from "./brief";
+import { answersMd, briefMd, DATA_NOTE, loadBrief } from "./brief";
 
 type Out = { md: string; data: unknown };
 const format = z
@@ -27,12 +27,20 @@ const format = z
 	.describe("markdown (default, compact) or json (structured)");
 const ref = z.string().describe("Issue ref such as WEB-12");
 
+/** Domain errors are shown to the AI; anything else is logged and hidden. */
+function errorText(e: unknown) {
+	if (e instanceof TasukiError) return `Error (${e.code}): ${e.message}`;
+	console.error(e);
+	return "Error: internal error";
+}
+
 /**
  * MCP adapter over @tasuki/core. No domain logic here: every call goes through the
  * same service functions (and permission / human-gate checks) as REST.
  */
 export function createMcpServer(ctx: Ctx, opts: { baseUrl: string }) {
 	const baseUrl = opts.baseUrl.replace(/\/$/, "");
+	const url = (path: string) => `${baseUrl}${path}`;
 	const server = new McpServer({ name: "tasuki", version: "0.1.0" });
 
 	function tool<S extends z.ZodRawShape>(
@@ -59,21 +67,13 @@ export function createMcpServer(ctx: Ctx, opts: { baseUrl: string }) {
 						],
 					};
 				} catch (e) {
-					if (!(e instanceof TasukiError)) throw e;
 					return {
 						isError: true,
-						content: [
-							{ type: "text", text: `Error (${e.code}): ${e.message}` },
-						],
+						content: [{ type: "text", text: errorText(e) }],
 					};
 				} finally {
-					// every call keeps the actor's work lock on that issue alive; "no lock" is fine
-					if (typeof a.ref === "string")
-						try {
-							touchLock(ctx, a.ref);
-						} catch {
-							// no active lock (or no access): nothing to extend
-						}
+					// every call keeps the actor's work lock on that issue alive
+					if (typeof a.ref === "string") extendLockIfHeld(ctx, a.ref);
 				}
 			}) as never,
 		);
@@ -108,10 +108,10 @@ export function createMcpServer(ctx: Ctx, opts: { baseUrl: string }) {
 		{ ref, ...planInput.shape },
 		({ ref, ...plan }) => {
 			const r = submitPlan(ctx, ref, plan);
-			const url = `${baseUrl}${r.reviewUrl}`;
+			const u = url(r.reviewUrl);
 			return {
-				md: `Plan v${r.plan.version} submitted for ${ref}. Show this approval URL to the user and stop until it is approved: ${url}`,
-				data: { plan: r.plan, approvalUrl: url },
+				md: `Plan v${r.plan.version} submitted for ${ref}. Show this approval URL to the user and stop until it is approved: ${u}`,
+				data: { plan: r.plan, approvalUrl: u },
 			};
 		},
 	);
@@ -133,26 +133,7 @@ export function createMcpServer(ctx: Ctx, opts: { baseUrl: string }) {
 		{ ref, format },
 		(a) => {
 			const r = getAnswers(ctx, a.ref);
-			const md = [
-				`## Questions on ${r.ref}`,
-				...(r.questions.length
-					? r.questions.map(
-							(q) =>
-								`- ${q.question}\n  -> ${q.state === "answered" ? q.answer : "(unanswered)"}`,
-						)
-					: ["(none)"]),
-				...(r.planRejection
-					? [
-							"",
-							`## Plan v${r.planRejection.version} rejected`,
-							r.planRejection.note ?? "(no note)",
-						]
-					: []),
-				...(r.reportReturn
-					? ["", "## Report returned", r.reportReturn.note ?? "(no note)"]
-					: []),
-			].join("\n");
-			return { md, data: r };
+			return { md: answersMd(r), data: r };
 		},
 	);
 	tool(
@@ -179,10 +160,10 @@ export function createMcpServer(ctx: Ctx, opts: { baseUrl: string }) {
 		{ ref, ...reportInput.shape },
 		({ ref, ...rep }) => {
 			const r = submitReport(ctx, ref, rep);
-			const url = `${baseUrl}${r.reviewUrl}`;
+			const u = url(r.reviewUrl);
 			return {
-				md: `Report submitted for ${ref}. Show this URL to the user for review: ${url}`,
-				data: { report: r.report, reviewUrl: url },
+				md: `Report submitted for ${ref}. Show this URL to the user for review: ${u}`,
+				data: { report: r.report, reviewUrl: u },
 			};
 		},
 	);
@@ -222,15 +203,19 @@ export function createMcpServer(ctx: Ctx, opts: { baseUrl: string }) {
 			description: `A ticket as a Markdown brief. ${DATA_NOTE}`,
 			mimeType: "text/markdown",
 		},
-		(uri, v) => ({
-			contents: [
-				{
-					uri: uri.href,
-					mimeType: "text/markdown",
-					text: briefMd(loadBrief(ctx, String(v.ref))),
-				},
-			],
-		}),
+		(uri, v) => {
+			let text: string;
+			try {
+				text = briefMd(loadBrief(ctx, String(v.ref)));
+			} catch (e) {
+				if (e instanceof TasukiError) throw e;
+				console.error(e);
+				throw new Error("internal error");
+			}
+			return {
+				contents: [{ uri: uri.href, mimeType: "text/markdown", text }],
+			};
+		},
 	);
 
 	const user = (text: string) => ({

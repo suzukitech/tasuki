@@ -4,6 +4,7 @@ import {
 	answerQuestion,
 	askQuestion,
 	claimNext,
+	extendLockIfHeld,
 	getAnswers,
 	getIssue,
 	moveIssue,
@@ -43,6 +44,35 @@ test("claimNext: priority desc, then oldest; takes the lock, no status change", 
 	expect(getIssue(tok, hi).category).toBe("ready");
 	expect(w.db.select().from(agentSessions).all()).toHaveLength(1);
 	expect(claimNext(tok)?.ref).toBe(hi); // idempotent: same open lock
+});
+
+test("claimNext: an already-held lock on an eligible issue wins over a higher-priority one", () => {
+	const w = world();
+	const tok = w.ctx(w.u.mem, "token");
+	const low = w.mk({ title: "low", priority: 1 });
+	expect(claimNext(tok)?.ref).toBe(low);
+	const hi = w.mk({ title: "high", priority: 4 });
+	expect(claimNext(tok)?.ref).toBe(low); // keeps the held one, no second lock
+	expect(w.db.select().from(agentSessions).all()).toHaveLength(1);
+	expect(hi).not.toBe(low);
+});
+
+test("extendLockIfHeld: extends own lock; null for no lock / bad ref / read-only token", () => {
+	const w = world();
+	const ref = w.mk({ title: "a" });
+	const tok = w.ctx(w.u.mem, "token");
+	expect(extendLockIfHeld(tok, ref)).toBeNull(); // no lock yet
+	claimNext(tok);
+	w.clock.t = new Date(w.clock.t.getTime() + 10 * 60_000);
+	expect(extendLockIfHeld(tok, ref)?.expiresAt.getTime()).toBe(
+		w.clock.t.getTime() + 30 * 60_000,
+	);
+	expect(extendLockIfHeld(tok, "nope")).toBeNull();
+	expect(extendLockIfHeld(w.ctx(w.u.mem2, "token"), ref)).toBeNull(); // not theirs
+	const ro = w.ctx(w.u.mem, "token", { scopes: ["read"], projectIds: null });
+	expect(extendLockIfHeld(ro, ref)).toBeNull();
+	w.clock.t = new Date(w.clock.t.getTime() + 31 * 60_000);
+	expect(extendLockIfHeld(tok, ref)).toBeNull(); // expired
 });
 
 test("claimNext: skips issues locked by others, none -> null, needs write scope", () => {
