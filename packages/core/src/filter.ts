@@ -2,9 +2,9 @@ import {
 	escapeLike,
 	issueLabels,
 	issues,
+	issueTextMatch,
 	labels,
 	STATUS_CATEGORIES,
-	searchIssueIds,
 	statuses,
 	users,
 } from "@tasuki/db";
@@ -21,6 +21,8 @@ export type Cond =
 	| { key: "due"; op: Op; value: string };
 export type FilterAst = { conds: Cond[]; terms: string[] };
 
+const KEYS = ["status", "assignee", "label", "priority", "due"];
+
 const op = (v: string): [Op, string] => {
 	const [, o, rest = ""] = /^(>=|<=|>|<|=)?(.*)$/.exec(v) ?? [];
 	return [OPS.find((x) => x === o) ?? "=", rest];
@@ -29,19 +31,20 @@ const op = (v: string): [Op, string] => {
 /** `status:open assignee:me priority:>=high due:<2026-12-31 label:bug "free text" word` */
 export function parseFilter(q: string): FilterAst {
 	const ast: FilterAst = { conds: [], terms: [] };
-	for (const m of q.matchAll(/"([^"]*)"|(\S+)/g)) {
-		if (m[1] !== undefined) {
-			if (m[1].trim()) ast.terms.push(m[1].trim());
+	for (const m of q.matchAll(/([A-Za-z]+):"([^"]*)"|"([^"]*)"|(\S+)/g)) {
+		if (m[3] !== undefined) {
+			if (m[3].trim()) ast.terms.push(m[3].trim());
 			continue;
 		}
-		const tok = m[2] ?? "";
-		const kv = /^([A-Za-z]+):(.*)$/.exec(tok);
-		if (!kv) {
-			ast.terms.push(tok);
-			continue;
-		}
-		const [, k = "", raw = ""] = kv;
+		const kv = m[1]
+			? [m[0], m[1], m[2]]
+			: /^([A-Za-z]+):(.*)$/.exec(m[4] ?? "");
+		const [, k = "", raw = ""] = kv ?? [];
 		const key = k.toLowerCase();
+		if (!kv || !KEYS.includes(key)) {
+			ast.terms.push(m[1] ? `${k}:${raw}` : (m[4] ?? ""));
+			continue;
+		}
 		if (!raw) fail("invalid", `empty value for '${key}'`);
 		if (key === "status" || key === "assignee" || key === "label") {
 			ast.conds.push({ key, value: raw });
@@ -61,7 +64,7 @@ export function parseFilter(q: string): FilterAst {
 			const [o, v] = op(raw);
 			if (!DATE_RE.test(v)) fail("invalid", `bad date '${v}'`);
 			ast.conds.push({ key, op: o, value: v });
-		} else fail("invalid", `unknown filter key '${key}'`);
+		}
 	}
 	return ast;
 }
@@ -128,9 +131,7 @@ function buildIssueWhere(ctx: Ctx, projectId: string, ast: FilterAst) {
 	return and(
 		eq(issues.projectId, projectId),
 		...ast.conds.map((c) => condSql(ctx, projectId, c)),
-		...ast.terms.map((t) =>
-			inArray(issues.id, searchIssueIds(ctx.db, projectId, t)),
-		),
+		...ast.terms.map(issueTextMatch),
 	) as SQL;
 }
 

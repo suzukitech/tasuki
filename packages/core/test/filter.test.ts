@@ -35,14 +35,15 @@ describe("parseFilter", () => {
 		).toHaveLength(3);
 		expect(parseFilter('"" ').terms).toEqual([]);
 	});
+	test("unknown key is free text; quoted values", () => {
+		expect(parseFilter("foo:bar").terms).toEqual(["foo:bar"]);
+		expect(parseFilter('foo:"a b"').terms).toEqual(["foo:a b"]);
+		expect(parseFilter('status:"In Progress"').conds).toEqual([
+			{ key: "status", value: "In Progress" },
+		]);
+	});
 	test("invalid", () => {
-		for (const q of [
-			"foo:bar",
-			"status:",
-			"priority:huge",
-			"due:tomorrow",
-			"priority:>9",
-		])
+		for (const q of ["status:", "priority:huge", "due:tomorrow", "priority:>9"])
 			expect(codeOf(() => parseFilter(q))).toBe("invalid");
 	});
 });
@@ -122,7 +123,7 @@ describe("searchIssues", () => {
 	test("permissions", () => {
 		const { ctx, u } = data();
 		expect(codeOf(() => searchIssues(ctx(u.out), "WEB", ""))).toBe("forbidden");
-		expect(codeOf(() => searchIssues(ctx(u.mem), "WEB", "zzz:1"))).toBe(
+		expect(codeOf(() => searchIssues(ctx(u.mem), "WEB", "priority:zzz"))).toBe(
 			"invalid",
 		);
 	});

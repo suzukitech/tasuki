@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { and, eq, or, sql } from "drizzle-orm";
+import { and, eq, or, type SQL, sql } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import type { BaseSQLiteDatabase } from "drizzle-orm/sqlite-core";
@@ -26,25 +26,31 @@ export function openDb(path: string) {
 	return db;
 }
 
-/** Issue ids in a project matching `term`. FTS5 trigram for >=3 chars, LIKE below. */
+/** SQL condition: issue text matches `term`. FTS5 trigram for >=3 chars, LIKE below. */
+export function issueTextMatch(term: string): SQL {
+	const { issues } = schema;
+	const like = `%${escapeLike(term)}%`;
+	return (
+		[...term].length >= 3
+			? sql`${issues.id} IN (SELECT issue_id FROM issues_fts WHERE issues_fts MATCH ${`"${term.replaceAll('"', '""')}"`})`
+			: or(
+					sql`${issues.title} LIKE ${like} ESCAPE '\\'`,
+					sql`${issues.bodyMd} LIKE ${like} ESCAPE '\\'`,
+				)
+	) as SQL;
+}
+
+/** Issue ids in a project matching `term`. */
 export function searchIssueIds(
 	db: Conn,
 	projectId: string,
 	term: string,
 ): string[] {
 	const { issues } = schema;
-	const like = `%${escapeLike(term)}%`;
-	const match =
-		[...term].length >= 3
-			? sql`${issues.id} IN (SELECT issue_id FROM issues_fts WHERE issues_fts MATCH ${`"${term.replaceAll('"', '""')}"`})`
-			: or(
-					sql`${issues.title} LIKE ${like} ESCAPE '\\'`,
-					sql`${issues.bodyMd} LIKE ${like} ESCAPE '\\'`,
-				);
 	return db
 		.select({ id: issues.id })
 		.from(issues)
-		.where(and(eq(issues.projectId, projectId), match))
+		.where(and(eq(issues.projectId, projectId), issueTextMatch(term)))
 		.all()
 		.map((r) => r.id);
 }

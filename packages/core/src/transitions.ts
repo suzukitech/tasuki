@@ -1,5 +1,6 @@
 import { type Category, plans, type statuses } from "@tasuki/db";
 import { and, eq } from "drizzle-orm";
+import { generateKeyBetween } from "fractional-indexing";
 import { type Ctx, fail, log, nowOf } from "./ctx";
 import { endRank, type Loaded, patchIssue, statusFor } from "./issues";
 import { requireSession } from "./permissions";
@@ -66,6 +67,15 @@ export const TRANSITIONS: Record<
 	},
 };
 
+/** A client-supplied rank must be a valid fractional-indexing key. */
+function validRank(rank: string) {
+	try {
+		generateKeyBetween(rank, null);
+	} catch {
+		fail("invalid", "bad rank");
+	}
+}
+
 const REVIEW: Category[] = ["plan_review", "impl_review"];
 
 /** Approver, project manager or system admin (the latter two are `manager`). */
@@ -120,11 +130,13 @@ export function transition(
 		if (e?.approver) requireApprover(c, l);
 		if (from === "ready" && to === "in_progress") requireApprovedPlan(c, l);
 	}
+	if (opts.rank !== undefined) validRank(opts.rank);
 	const target = opts.target ?? statusFor(c, l.project.id, to);
 	patchIssue(c, l.issue.id, {
 		statusId: target.id,
 		rank: opts.rank ?? endRank(c, target.id),
-		closedAt: to === "done" ? nowOf(c) : null,
+		// a same-category reorder keeps closedAt
+		...(from !== to && { closedAt: to === "done" ? nowOf(c) : null }),
 	});
 	if (l.issue.statusId !== target.id)
 		log(c, l.issue.id, "updated", "status", l.statusName, target.name);

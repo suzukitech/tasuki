@@ -113,7 +113,9 @@ export function submitPlan(ctx: Ctx, ref: string, input: unknown) {
 		if (hasOpenQuestion(c, l.issue.id))
 			fail("gate", "answer open questions before submitting a plan");
 		let crits = criteriaOf(c, l.issue.id);
-		if (!crits.length && inp.criteria?.length) {
+		if (inp.criteria?.length && crits.length)
+			fail("invalid", "criteria already exist: use updateCriteria");
+		if (inp.criteria?.length) {
 			crits = c.db
 				.insert(acceptanceCriteria)
 				.values(
@@ -396,18 +398,35 @@ export function updateCriteria(ctx: Ctx, ref: string, criteria: unknown) {
 			before.map((x) => x.text),
 			next.map((x) => x.text),
 		);
-		// Criteria changed after approval: in ANY category the approval is void. The same
-		// plan goes back to `proposed` so the approver re-reviews it against the new criteria.
+		// Criteria changed after approval: in ANY category the approval is void. While
+		// working (in_progress / impl_review) the same plan goes back to `proposed` for
+		// re-review; elsewhere it is superseded (a new plan must be submitted).
 		const approved = planIn(c, l.issue.id, "approved");
 		if (approved) {
+			const working =
+				l.category === "in_progress" || l.category === "impl_review";
 			c.db
 				.update(plans)
-				.set({ state: "proposed", reviewedBy: null, reviewNote: null })
+				.set(
+					working
+						? { state: "proposed", reviewedBy: null, reviewNote: null }
+						: { state: "superseded" },
+				)
 				.where(eq(plans.id, approved.id))
 				.run();
 			endSessions(c, l.issue.id, "plan_revoked");
-			if (l.category === "in_progress" || l.category === "impl_review")
-				transition(c, l, "plan_review", "updateCriteria");
+			if (l.category === "impl_review")
+				c.db
+					.update(reports)
+					.set({ state: "returned" })
+					.where(
+						and(
+							eq(reports.issueId, l.issue.id),
+							eq(reports.state, "submitted"),
+						),
+					)
+					.run();
+			if (working) transition(c, l, "plan_review", "updateCriteria");
 			else patchIssue(c, l.issue.id, {});
 			log(
 				c,

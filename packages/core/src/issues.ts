@@ -27,6 +27,7 @@ import { generateKeyBetween } from "fractional-indexing";
 import { atomic, type Ctx, fail, log, logAll, nowOf, parse } from "./ctx";
 import { type Role, requireProjectRole, requireSession } from "./permissions";
 import { getProject } from "./projects";
+import { TRANSITIONS } from "./transitions";
 
 export const refOf = (key: string, number: number) => `${key}-${number}`;
 
@@ -125,9 +126,18 @@ type Refs = Partial<
 >;
 
 /** Validate ref fields that are set and differ from `current` (all of them on create). */
-function checkRefs(ctx: Ctx, projectId: string, p: Refs, current?: Refs) {
+function checkRefs(
+	ctx: Ctx,
+	projectId: string,
+	p: Refs,
+	current?: Refs,
+	selfId?: string,
+) {
 	const changed = (f: keyof Refs) => (p[f] !== current?.[f] ? p[f] : null);
-	for (const uid of [changed("assigneeId"), changed("approverId")]) {
+	for (const [f, uid] of [
+		["assigneeId", changed("assigneeId")],
+		["approverId", changed("approverId")],
+	] as const) {
 		if (!uid) continue;
 		const u = ctx.db.query.users.findFirst({ where: eq(users.id, uid) }).sync();
 		const m = ctx.db.query.projectMembers
@@ -140,6 +150,8 @@ function checkRefs(ctx: Ctx, projectId: string, p: Refs, current?: Refs) {
 			.sync();
 		if (!u || (!m && u.role !== "admin"))
 			fail("invalid", "assignee/approver must be a project member");
+		if (f === "approverId" && u?.role !== "admin" && m?.role === "viewer")
+			fail("invalid", "approver must be a member or manager");
 	}
 	const typeId = changed("typeId");
 	if (
@@ -150,12 +162,17 @@ function checkRefs(ctx: Ctx, projectId: string, p: Refs, current?: Refs) {
 	)
 		fail("invalid", "unknown issue type");
 	const parentId = changed("parentId");
-	if (
-		parentId &&
-		ctx.db.query.issues.findFirst({ where: eq(issues.id, parentId) }).sync()
-			?.projectId !== projectId
-	)
-		fail("invalid", "unknown parent issue");
+	if (parentId) {
+		let cur: string | null = parentId;
+		for (let depth = 0; cur; depth++) {
+			if (cur === selfId || depth > 1000)
+				fail("invalid", "parent would create a cycle");
+			const row: { projectId: string; parentId: string | null } | undefined =
+				ctx.db.query.issues.findFirst({ where: eq(issues.id, cur) }).sync();
+			if (row?.projectId !== projectId) fail("invalid", "unknown parent issue");
+			cur = row?.parentId ?? null;
+		}
+	}
 }
 
 function labelNames(ctx: Ctx, issueId: string) {
@@ -331,14 +348,16 @@ export function updateIssue(
 ) {
 	const inp = parse(updateIssueInput, patch);
 	return atomic(ctx, (c) => {
-		const { issue, project } = loadIssue(c, ref, "member");
+		const { issue, project, category } = loadIssue(c, ref, "member");
 		if (
 			opts.ifMatch !== undefined &&
 			opts.ifMatch !== issue.updatedAt.getTime()
 		)
 			fail("conflict", "issue was changed by someone else");
 		guardGateFields(c, inp, issue);
-		checkRefs(c, project.id, inp, issue);
+		checkRefs(c, project.id, inp, issue, issue.id);
+		if (inp.flow && inp.flow !== issue.flow && !TRANSITIONS[inp.flow][category])
+			fail("conflict", `cannot switch to '${inp.flow}' from '${category}'`);
 		const set: Record<string, unknown> = {};
 		const acts: Parameters<typeof logAll>[2] = [];
 		for (const [f, v] of Object.entries(inp)) {

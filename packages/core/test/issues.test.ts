@@ -231,3 +231,26 @@ describe("parseQuickTitle", () => {
 		});
 	});
 });
+
+describe("ref checks", () => {
+	test("parent cycles and viewer approver are rejected", () => {
+		const w = setup();
+		const m = w.ctx(w.u.mem);
+		const a = w.issue({}, w.u.mem);
+		const b = w.issue({ parentId: a.id }, w.u.mem);
+		expect(codeOf(() => updateIssue(m, "WEB-1", { parentId: a.id }))).toBe(
+			"invalid",
+		);
+		expect(codeOf(() => updateIssue(m, "WEB-1", { parentId: b.id }))).toBe(
+			"invalid",
+		);
+		expect(
+			codeOf(() =>
+				updateIssue(w.ctx(w.u.mgr), "WEB-1", { approverId: w.u.view.id }),
+			),
+		).toBe("invalid");
+		expect(codeOf(() => w.issue({ approverId: w.u.view.id }, w.u.mem))).toBe(
+			"invalid",
+		);
+	});
+});

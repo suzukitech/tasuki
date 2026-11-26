@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentSessions, plans, statuses } from "@tasuki/db";
+import { agentSessions, plans, reports, statuses } from "@tasuki/db";
 import { eq } from "drizzle-orm";
 import {
 	answerQuestion,
@@ -204,7 +204,9 @@ describe("plan", () => {
 		const w = world();
 		expect(codeOf(() => submitPlan(w.tok, w.ref, PLAN))).toBe("conflict"); // draft
 		w.toPlanReview();
-		expect(codeOf(() => submitPlan(w.tok, w.ref, PLAN))).toBe("conflict"); // plan_review
+		expect(
+			codeOf(() => submitPlan(w.tok, w.ref, { ...PLAN, criteria: undefined })),
+		).toBe("conflict"); // plan_review
 		rejectPlan(w.human, w.ref, "missing tests");
 		expect(w.cat()).toBe("ready");
 		const first = getIssue(w.human, w.ref).criteria[0]?.id;
@@ -667,4 +669,86 @@ test("startImplementation re-checks the plan gate when already in_progress", () 
 	moveIssue(human, "WEB-1", { statusId: sid("in_progress") });
 	updateIssue(human, "WEB-1", { flow: "ai" }); // switched mid-work, no plan exists
 	expect(codeOf(() => startImplementation(tok, "WEB-1"))).toBe("gate");
+});
+
+describe("code-review fixes", () => {
+	test("bogus rank is rejected and the column keeps working", () => {
+		const w = world();
+		const to = w.statusId("ready");
+		expect(
+			codeOf(() => moveIssue(w.human, w.ref, { statusId: to, rank: "!!" })),
+		).toBe("invalid");
+		w.issue({ title: "second" });
+		moveIssue(w.human, "WEB-2", { statusId: to });
+		expect(getIssue(w.human, "WEB-2").category).toBe("ready");
+	});
+	test("closedAt set entering done, kept on reorder, cleared leaving", () => {
+		const w = setup();
+		w.issue({ flow: "simple" });
+		const h = w.ctx(w.u.mem);
+		const st = (c: string) =>
+			w.db
+				.select()
+				.from(statuses)
+				.all()
+				.find((s) => s.category === c && s.projectId === w.project.id)
+				?.id as string;
+		completeIssue(h, "WEB-1");
+		const closed = getIssue(h, "WEB-1").issue.closedAt;
+		expect(closed).not.toBeNull();
+		w.clock.t = new Date("2026-02-01T00:00:00Z");
+		moveIssue(h, "WEB-1", { statusId: st("done"), rank: "a5" });
+		expect(getIssue(h, "WEB-1").issue.closedAt).toEqual(closed);
+		moveIssue(h, "WEB-1", { statusId: st("ready") });
+		expect(getIssue(h, "WEB-1").issue.closedAt).toBeNull();
+	});
+	test("criteria edit outside work supersedes the approved plan", () => {
+		const w = world();
+		w.toInProgress();
+		moveIssue(w.human, w.ref, { statusId: w.statusId("ready") });
+		const c1 = getIssue(w.human, w.ref).criteria[0];
+		updateCriteria(w.human, w.ref, [{ id: c1?.id, text: "changed" }]);
+		const g = getIssue(w.human, w.ref);
+		expect(g.category).toBe("ready");
+		expect(g.plans[0]?.state).toBe("superseded");
+		expect(codeOf(() => startImplementation(w.tok, w.ref))).toBe("gate");
+	});
+	test("criteria edit in impl_review returns the report", () => {
+		const w = world();
+		w.toImplReview();
+		const c1 = getIssue(w.human, w.ref).criteria[0];
+		updateCriteria(w.human, w.ref, [{ id: c1?.id, text: "changed" }]);
+		expect(w.cat()).toBe("plan_review");
+		approvePlan(w.human, w.ref);
+		expect(w.db.select().from(reports).get()?.state).toBe("returned");
+		recordEvidence(w.tok, w.ref, c1?.id as string, {
+			result: "met",
+			evidenceMd: "ok",
+		});
+		for (const c of getIssue(w.human, w.ref).criteria)
+			recordEvidence(w.tok, w.ref, c.id, { result: "met", evidenceMd: "ok" });
+		submitReport(w.tok, w.ref, REPORT);
+		completeIssue(w.human, w.ref);
+		const states = w.db
+			.select()
+			.from(reports)
+			.all()
+			.map((r) => r.state);
+		expect(states.sort()).toEqual(["accepted", "returned"]);
+	});
+	test("submitPlan criteria rejected when criteria already exist", () => {
+		const w = world();
+		w.toPlanReview();
+		rejectPlan(w.human, w.ref, "redo");
+		expect(codeOf(() => submitPlan(w.tok, w.ref, PLAN))).toBe("invalid");
+		submitPlan(w.tok, w.ref, { ...PLAN, criteria: undefined });
+	});
+	test("flow cannot switch to simple from a review state", () => {
+		const w = world();
+		w.toPlanReview();
+		expect(codeOf(() => updateIssue(w.human, w.ref, { flow: "simple" }))).toBe(
+			"conflict",
+		);
+		expect(getIssue(w.human, w.ref).issue.flow).toBe("ai");
+	});
 });
