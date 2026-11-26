@@ -7,6 +7,7 @@ import {
 	approvePlan,
 	askQuestion,
 	completeIssue,
+	createIssue,
 	getIssue,
 	moveIssue,
 	recordEvidence,
@@ -525,5 +526,36 @@ describe("moveIssue cannot bypass gates", () => {
 				moveIssue(w.ctx(w.u.view), w.ref, { statusId: w.statusId("draft") }),
 			),
 		).toBe("forbidden");
+	});
+});
+
+describe("tokens cannot change who/what gates an issue", () => {
+	test("create: flow, skipPlanReview, approver need a session", () => {
+		const { ctx, u } = setup();
+		const tok = ctx(u.mem, "token");
+		const create = (input: Record<string, unknown>) => () =>
+			createIssue(tok, "WEB", { title: "t", ...input });
+		expect(codeOf(create({ flow: "simple" }))).toBe("gate");
+		expect(codeOf(create({ skipPlanReview: true }))).toBe("gate");
+		expect(codeOf(create({ approverId: u.mem2.id }))).toBe("gate");
+		expect(codeOf(create({ approverId: u.mem.id }))).toBeUndefined();
+		expect(
+			codeOf(() =>
+				createIssue(ctx(u.mem), "WEB", { title: "t", skipPlanReview: true }),
+			),
+		).toBeUndefined();
+	});
+
+	test("update: approver change needs a session", () => {
+		const { ctx, u, issue } = setup();
+		issue({}, u.mgr);
+		expect(
+			codeOf(() =>
+				updateIssue(ctx(u.mem, "token"), "WEB-1", { approverId: u.mem.id }),
+			),
+		).toBe("gate");
+		expect(
+			codeOf(() => updateIssue(ctx(u.mgr), "WEB-1", { approverId: u.mem.id })),
+		).toBeUndefined();
 	});
 });

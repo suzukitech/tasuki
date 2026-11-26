@@ -202,6 +202,11 @@ export function createIssue(ctx: Ctx, projectKey: string, input: unknown) {
 	const inp = parse(createIssueInput, input);
 	const project = getProject(ctx, projectKey, "member");
 	return atomic(ctx, (c) => {
+		guardGateFields(c, inp, {
+			flow: "ai",
+			skipPlanReview: false,
+			approverId: c.actor.userId,
+		});
 		checkRefs(c, project.id, inp as Partial<Issue>);
 		const { n } = c.db
 			.update(projects)
@@ -286,6 +291,21 @@ export function getIssue(ctx: Ctx, ref: string) {
 	};
 }
 
+/**
+ * flow / skip_plan_review decide which gates apply, and approver_id decides who
+ * passes them: a token (= an AI) must not change any of them, on create or update.
+ */
+function guardGateFields(
+	c: Ctx,
+	inp: { flow?: string; skipPlanReview?: boolean; approverId?: string | null },
+	current: Pick<Issue, "flow" | "skipPlanReview" | "approverId">,
+) {
+	const changed = (["flow", "skipPlanReview", "approverId"] as const).some(
+		(f) => inp[f] !== undefined && inp[f] !== current[f],
+	);
+	if (changed) requireSession(c, "changing flow / skipPlanReview / approver");
+}
+
 const PATCHABLE = [
 	"title",
 	"bodyMd",
@@ -315,13 +335,7 @@ export function updateIssue(
 			opts.ifMatch !== issue.updatedAt.getTime()
 		)
 			fail("conflict", "issue was changed by someone else");
-		// flow / skip_plan_review decide which gates apply: a token must not flip them
-		if (
-			(inp.flow !== undefined && inp.flow !== issue.flow) ||
-			(inp.skipPlanReview !== undefined &&
-				inp.skipPlanReview !== issue.skipPlanReview)
-		)
-			requireSession(c, "changing flow / skipPlanReview");
+		guardGateFields(c, inp, issue);
 		checkRefs(c, project.id, inp as Partial<Issue>);
 		const set: Record<string, unknown> = {};
 		for (const f of PATCHABLE) {
