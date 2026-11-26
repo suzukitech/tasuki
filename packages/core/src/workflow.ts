@@ -1,7 +1,7 @@
 import {
 	acceptanceCriteria,
 	agentSessions,
-	comments,
+	type Category,
 	planCriteria,
 	plans,
 	questions,
@@ -15,14 +15,25 @@ import {
 	planInput,
 	reportInput,
 } from "@tasuki/schema";
-import { and, asc, desc, eq, gt, isNull, lte } from "drizzle-orm";
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	gt,
+	inArray,
+	isNull,
+	lte,
+	type SQL,
+} from "drizzle-orm";
 import { atomic, type Ctx, fail, log, nowOf, parse } from "./ctx";
 import {
-	type Category,
+	insertComment,
 	type Loaded,
 	loadIssue,
+	loadIssueById,
 	patchIssue,
-	refById,
 	setCategory,
 } from "./issues";
 import { requireSession } from "./permissions";
@@ -32,10 +43,10 @@ const reviewUrl = (ref: string, tab: string) => `/issues/${ref}?tab=${tab}`;
 
 const openQuestionCount = (c: Ctx, issueId: string) =>
 	c.db
-		.select()
+		.select({ n: count() })
 		.from(questions)
 		.where(and(eq(questions.issueId, issueId), eq(questions.state, "open")))
-		.all().length;
+		.get()?.n ?? 0;
 
 const criteriaOf = (c: Ctx, issueId: string) =>
 	c.db
@@ -53,12 +64,21 @@ const planIn = (c: Ctx, issueId: string, state: "proposed" | "approved") =>
 		.orderBy(desc(plans.version))
 		.get();
 
-function endSessions(c: Ctx, issueId: string, outcome: string) {
+function endSessions(
+	c: Ctx,
+	issueId: string,
+	outcome: string,
+	extra?: SQL | undefined,
+) {
 	c.db
 		.update(agentSessions)
 		.set({ endedAt: nowOf(c), outcome })
 		.where(
-			and(eq(agentSessions.issueId, issueId), isNull(agentSessions.endedAt)),
+			and(
+				eq(agentSessions.issueId, issueId),
+				isNull(agentSessions.endedAt),
+				extra,
+			),
 		)
 		.run();
 }
@@ -109,13 +129,16 @@ export function submitPlan(ctx: Ctx, ref: string, input: unknown) {
 			mapped.set(id as string, m.stepRef);
 		}
 		// older proposed/approved plans no longer apply
-		for (const state of ["proposed", "approved"] as const) {
-			c.db
-				.update(plans)
-				.set({ state: "superseded" })
-				.where(and(eq(plans.issueId, l.issue.id), eq(plans.state, state)))
-				.run();
-		}
+		c.db
+			.update(plans)
+			.set({ state: "superseded" })
+			.where(
+				and(
+					eq(plans.issueId, l.issue.id),
+					inArray(plans.state, ["proposed", "approved"]),
+				),
+			)
+			.run();
 		const last = c.db
 			.select({ v: plans.version })
 			.from(plans)
@@ -204,17 +227,7 @@ export function startImplementation(ctx: Ctx, ref: string) {
 			fail("gate", "no approved plan: submit a plan and get it approved first");
 		requireState(l, "ready", "in_progress");
 		const now = nowOf(c);
-		c.db
-			.update(agentSessions)
-			.set({ endedAt: now, outcome: "expired" })
-			.where(
-				and(
-					eq(agentSessions.issueId, l.issue.id),
-					isNull(agentSessions.endedAt),
-					lte(agentSessions.expiresAt, now),
-				),
-			)
-			.run();
+		endSessions(c, l.issue.id, "expired", lte(agentSessions.expiresAt, now));
 		const open = c.db
 			.select()
 			.from(agentSessions)
@@ -310,7 +323,7 @@ export function answerQuestion(ctx: Ctx, questionId: string, answerMd: string) {
 			.where(eq(questions.id, questionId))
 			.get();
 		if (!q) return fail("not_found", "question not found");
-		loadIssue(c, refById(c, q.issueId), "member");
+		loadIssueById(c, q.issueId, "member");
 		if (q.state !== "open") fail("conflict", "already answered");
 		const done = c.db
 			.update(questions)
@@ -495,7 +508,6 @@ export function completeIssue(
 		log(c, l.issue.id, "completed");
 	});
 }
-export const acceptReport = completeIssue;
 
 /** HUMAN GATE (session only). */
 export function returnReport(ctx: Ctx, ref: string, note: string) {
@@ -512,16 +524,7 @@ export function returnReport(ctx: Ctx, ref: string, note: string) {
 				and(eq(reports.issueId, l.issue.id), eq(reports.state, "submitted")),
 			)
 			.run();
-		c.db
-			.insert(comments)
-			.values({
-				issueId: l.issue.id,
-				authorId: c.actor.userId,
-				bodyMd: text,
-				via: c.actor.via,
-				createdAt: nowOf(c),
-			})
-			.run();
+		insertComment(c, l.issue.id, text);
 		setCategory(c, l, "in_progress");
 		log(c, l.issue.id, "report_returned", undefined, undefined, text);
 	});

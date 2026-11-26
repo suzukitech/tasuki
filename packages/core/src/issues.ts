@@ -1,6 +1,7 @@
 import {
 	acceptanceCriteria,
 	activities,
+	type Category,
 	comments,
 	type Issue,
 	issueLabels,
@@ -12,7 +13,6 @@ import {
 	projects,
 	questions,
 	reports,
-	type STATUS_CATEGORIES,
 	statuses,
 	users,
 } from "@tasuki/db";
@@ -22,15 +22,43 @@ import {
 	PRIORITIES,
 	updateIssueInput,
 } from "@tasuki/schema";
-import { and, asc, desc, eq, sql } from "drizzle-orm";
+import {
+	and,
+	asc,
+	desc,
+	eq,
+	type SQL,
+	type SQLWrapper,
+	sql,
+} from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import { atomic, type Ctx, fail, log, nowOf, parse } from "./ctx";
-import { projectRole, type Role, requireSession } from "./permissions";
+import {
+	projectRole,
+	type Role,
+	requireProjectRole,
+	requireSession,
+} from "./permissions";
 import { getProject } from "./projects";
 
-export type Category = (typeof STATUS_CATEGORIES)[number];
-
 export const refOf = (key: string, number: number) => `${key}-${number}`;
+
+const selectIssue = (ctx: Ctx, where: SQL | undefined) =>
+	ctx.db
+		.select({ issue: issues, category: statuses.category })
+		.from(issues)
+		.innerJoin(statuses, eq(statuses.id, issues.statusId))
+		.where(where)
+		.get();
+
+function withProject(
+	ctx: Ctx,
+	project: typeof projects.$inferSelect,
+	row: { issue: Issue; category: Category },
+) {
+	const role = projectRole(ctx, project.id) as Role;
+	return { ...row, project, role, ref: refOf(project.key, row.issue.number) };
+}
 
 /** Load an issue by "KEY-12" ref and check the actor's role in its project. */
 export function loadIssue(
@@ -42,30 +70,29 @@ export function loadIssue(
 	const m = /^([A-Za-z]{2,10})-(\d+)$/.exec(ref.trim());
 	if (!m) return fail("invalid", `bad issue ref: ${ref}`);
 	const project = getProject(ctx, m[1] as string, min, kind);
-	const role = projectRole(ctx, project.id) as Role;
-	const row = ctx.db
-		.select({ issue: issues, category: statuses.category })
-		.from(issues)
-		.innerJoin(statuses, eq(statuses.id, issues.statusId))
-		.where(
-			and(eq(issues.projectId, project.id), eq(issues.number, Number(m[2]))),
-		)
-		.get();
+	const row = selectIssue(
+		ctx,
+		and(eq(issues.projectId, project.id), eq(issues.number, Number(m[2]))),
+	);
 	if (!row) return fail("not_found", `issue ${ref} not found`);
-	return { ...row, project, role, ref: refOf(project.key, row.issue.number) };
+	return withProject(ctx, project, row);
 }
-export function refById(ctx: Ctx, issueId: string) {
-	const r = ctx.db
-		.select({ key: projects.key, number: issues.number })
-		.from(issues)
-		.innerJoin(projects, eq(projects.id, issues.projectId))
-		.where(eq(issues.id, issueId))
-		.get();
-	return r ? refOf(r.key, r.number) : fail("not_found", "issue not found");
+
+/** Same as loadIssue, by issue id. */
+export function loadIssueById(ctx: Ctx, id: string, min: Role = "viewer") {
+	const row = selectIssue(ctx, eq(issues.id, id));
+	if (!row) return fail("not_found", "issue not found");
+	const project = ctx.db
+		.select()
+		.from(projects)
+		.where(eq(projects.id, row.issue.projectId))
+		.get() as typeof projects.$inferSelect;
+	requireProjectRole(ctx, project.id, min);
+	return withProject(ctx, project, row);
 }
 export type Loaded = ReturnType<typeof loadIssue>;
 
-export function statusFor(ctx: Ctx, projectId: string, category: Category) {
+function statusFor(ctx: Ctx, projectId: string, category: Category) {
 	const s = ctx.db
 		.select()
 		.from(statuses)
@@ -128,9 +155,18 @@ export function setCategory(
 }
 
 function checkRefs(ctx: Ctx, projectId: string, p: Partial<Issue>) {
+	const byId = <T extends typeof users | typeof issueTypes | typeof issues>(
+		t: T,
+		id: string,
+	) =>
+		ctx.db
+			.select()
+			.from(t as never)
+			.where(eq(t.id, id))
+			.get() as T["$inferSelect"] | undefined;
 	for (const uid of [p.assigneeId, p.approverId]) {
 		if (!uid) continue;
-		const u = ctx.db.select().from(users).where(eq(users.id, uid)).get();
+		const u = byId(users, uid);
 		const m = ctx.db
 			.select()
 			.from(projectMembers)
@@ -144,22 +180,10 @@ function checkRefs(ctx: Ctx, projectId: string, p: Partial<Issue>) {
 		if (!u || (!m && u.role !== "admin"))
 			fail("invalid", "assignee/approver must be a project member");
 	}
-	if (p.typeId) {
-		const t = ctx.db
-			.select()
-			.from(issueTypes)
-			.where(eq(issueTypes.id, p.typeId))
-			.get();
-		if (t?.projectId !== projectId) fail("invalid", "unknown issue type");
-	}
-	if (p.parentId) {
-		const t = ctx.db
-			.select()
-			.from(issues)
-			.where(eq(issues.id, p.parentId))
-			.get();
-		if (t?.projectId !== projectId) fail("invalid", "unknown parent issue");
-	}
+	if (p.typeId && byId(issueTypes, p.typeId)?.projectId !== projectId)
+		fail("invalid", "unknown issue type");
+	if (p.parentId && byId(issues, p.parentId)?.projectId !== projectId)
+		fail("invalid", "unknown parent issue");
 }
 
 function labelNames(ctx: Ctx, issueId: string) {
@@ -247,47 +271,33 @@ export function createIssue(ctx: Ctx, projectKey: string, input: unknown) {
 export function getIssue(ctx: Ctx, ref: string) {
 	const l = loadIssue(ctx, ref);
 	const id = l.issue.id;
-	const by = <T extends { issueId: unknown }>(t: T) =>
-		eq(t.issueId as never, id);
+	const rows = <
+		T extends
+			| typeof acceptanceCriteria
+			| typeof plans
+			| typeof reports
+			| typeof questions
+			| typeof comments
+			| typeof activities,
+	>(
+		t: T,
+		order: SQLWrapper,
+	) =>
+		ctx.db
+			.select()
+			.from(t as never)
+			.where(eq(t.issueId, id))
+			.orderBy(asc(order))
+			.all() as T["$inferSelect"][];
 	return {
 		...l,
 		labels: labelNames(ctx, id),
-		criteria: ctx.db
-			.select()
-			.from(acceptanceCriteria)
-			.where(by(acceptanceCriteria))
-			.orderBy(asc(acceptanceCriteria.position))
-			.all(),
-		plans: ctx.db
-			.select()
-			.from(plans)
-			.where(by(plans))
-			.orderBy(asc(plans.version))
-			.all(),
-		reports: ctx.db
-			.select()
-			.from(reports)
-			.where(by(reports))
-			.orderBy(asc(reports.createdAt))
-			.all(),
-		questions: ctx.db
-			.select()
-			.from(questions)
-			.where(by(questions))
-			.orderBy(asc(questions.createdAt))
-			.all(),
-		comments: ctx.db
-			.select()
-			.from(comments)
-			.where(by(comments))
-			.orderBy(asc(comments.createdAt))
-			.all(),
-		activities: ctx.db
-			.select()
-			.from(activities)
-			.where(by(activities))
-			.orderBy(asc(activities.createdAt))
-			.all(),
+		criteria: rows(acceptanceCriteria, acceptanceCriteria.position),
+		plans: rows(plans, plans.version),
+		reports: rows(reports, reports.createdAt),
+		questions: rows(questions, questions.createdAt),
+		comments: rows(comments, comments.createdAt),
+		activities: rows(activities, activities.createdAt),
 	};
 }
 
@@ -305,20 +315,6 @@ function guardGateFields(
 	);
 	if (changed) requireSession(c, "changing flow / skipPlanReview / approver");
 }
-
-const PATCHABLE = [
-	"title",
-	"bodyMd",
-	"typeId",
-	"priority",
-	"assigneeId",
-	"approverId",
-	"parentId",
-	"dueDate",
-	"estimate",
-	"flow",
-	"skipPlanReview",
-] as const;
 
 /** Edit fields. `ifMatch` = the updatedAt (ms) the caller last saw. */
 export function updateIssue(
@@ -338,11 +334,12 @@ export function updateIssue(
 		guardGateFields(c, inp, issue);
 		checkRefs(c, project.id, inp as Partial<Issue>);
 		const set: Record<string, unknown> = {};
-		for (const f of PATCHABLE) {
-			const v = inp[f];
-			if (v !== undefined && v !== issue[f]) {
+		for (const [f, v] of Object.entries(inp)) {
+			if (f === "labels" || v === undefined) continue;
+			const cur = issue[f as keyof Issue];
+			if (v !== cur) {
 				set[f] = v;
-				log(c, issue.id, "updated", f, issue[f], v);
+				log(c, issue.id, "updated", f, cur, v);
 			}
 		}
 		if (inp.labels) {
@@ -363,21 +360,25 @@ export function deleteIssue(ctx: Ctx, ref: string) {
 	ctx.db.delete(issues).where(eq(issues.id, issue.id)).run();
 }
 
+export function insertComment(c: Ctx, issueId: string, bodyMd: string) {
+	return c.db
+		.insert(comments)
+		.values({
+			issueId,
+			authorId: c.actor.userId,
+			bodyMd,
+			via: c.actor.via,
+			createdAt: nowOf(c),
+		})
+		.returning()
+		.get();
+}
+
 export function addComment(ctx: Ctx, ref: string, bodyMd: string) {
 	const body = parse(noteInput, bodyMd);
 	return atomic(ctx, (c) => {
 		const { issue } = loadIssue(c, ref, "viewer", "write");
-		const row = c.db
-			.insert(comments)
-			.values({
-				issueId: issue.id,
-				authorId: c.actor.userId,
-				bodyMd: body,
-				via: c.actor.via,
-				createdAt: nowOf(c),
-			})
-			.returning()
-			.get();
+		const row = insertComment(c, issue.id, body);
 		log(c, issue.id, "commented");
 		return row;
 	});

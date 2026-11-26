@@ -1,4 +1,5 @@
 import { activities, type Db } from "@tasuki/db";
+import type { tokenInput } from "@tasuki/schema";
 import type { z } from "zod";
 
 export type Actor = {
@@ -6,7 +7,10 @@ export type Actor = {
 	/** 'web' | 'cli' | 'mcp:<client>' | 'import' */
 	via: string;
 	auth: "session" | "token";
-	token?: { scopes: ("read" | "write")[]; projectIds: string[] | null };
+	token?: {
+		scopes: z.output<typeof tokenInput>["scopes"];
+		projectIds: string[] | null;
+	};
 };
 export type Ctx = { db: Db; actor: Actor; now?: () => Date };
 

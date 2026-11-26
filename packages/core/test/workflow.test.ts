@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import { agentSessions, plans, statuses } from "@tasuki/db";
 import { eq } from "drizzle-orm";
 import {
-	acceptReport,
 	answerQuestion,
 	approvePlan,
 	askQuestion,
@@ -110,7 +109,7 @@ describe("happy path", () => {
 		expect(r.reviewUrl).toBe("/issues/WEB-1?tab=report");
 		expect(w.cat()).toBe("impl_review");
 		expect(r.report.planId).toBe(plan.id);
-		acceptReport(w.human, w.ref);
+		completeIssue(w.human, w.ref);
 		const done = getIssue(w.human, w.ref);
 		expect(done.category).toBe("done");
 		expect(done.issue.closedAt).not.toBeNull();
@@ -180,7 +179,7 @@ describe("human gates reject tokens (even admin)", () => {
 		const w = world();
 		w.toImplReview();
 		for (const t of [w.tok, w.ctx(w.u.admin, "token")]) {
-			expect(codeOf(() => acceptReport(t, w.ref))).toBe("gate");
+			expect(codeOf(() => completeIssue(t, w.ref))).toBe("gate");
 			expect(codeOf(() => returnReport(t, w.ref, "redo"))).toBe("gate");
 			expect(codeOf(() => completeIssue(t, w.ref))).toBe("gate");
 			expect(
@@ -454,7 +453,7 @@ describe("report", () => {
 		expect(g.reports[0]?.state).toBe("returned");
 		expect(g.comments.map((c) => c.bodyMd)).toContain("fix the edge case");
 		submitReport(w.tok, w.ref, REPORT);
-		acceptReport(w.human, w.ref);
+		completeIssue(w.human, w.ref);
 		expect(w.cat()).toBe("done");
 	});
 	test("ai flow cannot be completed from in_progress", () => {

@@ -1,7 +1,7 @@
 import { apiTokens, type Db, invites, sessions, users } from "@tasuki/db";
 import { registerInput, tokenInput } from "@tasuki/schema";
 import { and, count, eq, isNull } from "drizzle-orm";
-import { type Actor, atomic, type Ctx, fail, nowOf, parse } from "./ctx";
+import { type Actor, type Ctx, fail, nowOf, parse } from "./ctx";
 import { requireAdmin, requireSession } from "./permissions";
 
 const DAY = 86_400_000;
@@ -16,8 +16,6 @@ const sha256 = (s: string) =>
 const randomToken = (prefix = "") =>
 	prefix +
 	Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString("base64url");
-
-type Clock = { now?: () => Date };
 
 /** Returns the plaintext token ONCE; only its sha256 is stored. HUMAN GATE (session only). */
 export function createApiToken(ctx: Ctx, input: unknown) {
@@ -44,7 +42,7 @@ export function resolveToken(
 	db: Db,
 	plaintext: string,
 	via = "mcp:unknown",
-	clock: Clock = {},
+	clock: Pick<Ctx, "now"> = {},
 ): Actor | null {
 	const now = nowOf(clock);
 	const t = db
@@ -69,7 +67,11 @@ export function resolveToken(
 }
 
 /** New session; returns the plaintext cookie value. */
-export function createSession(db: Db, userId: string, clock: Clock = {}) {
+export function createSession(
+	db: Db,
+	userId: string,
+	clock: Pick<Ctx, "now"> = {},
+) {
 	const now = nowOf(clock);
 	const token = randomToken();
 	db.insert(sessions)
@@ -86,7 +88,7 @@ export function createSession(db: Db, userId: string, clock: Clock = {}) {
 export function resolveSession(
 	db: Db,
 	plaintext: string,
-	clock: Clock = {},
+	clock: Pick<Ctx, "now"> = {},
 ): Actor | null {
 	const s = db
 		.select()
@@ -102,7 +104,7 @@ export async function login(
 	db: Db,
 	email: string,
 	password: string,
-	clock: Clock = {},
+	clock: Pick<Ctx, "now"> = {},
 ) {
 	const u = db
 		.select()
@@ -131,18 +133,29 @@ export function createInvite(ctx: Ctx) {
 	return { token, expiresAt };
 }
 
+const insertUser = (
+	db: Pick<Db, "insert">,
+	inp: { email: string; name: string },
+	passwordHash: string,
+	extra: { role?: "admin"; createdAt?: Date } = {},
+) =>
+	db
+		.insert(users)
+		.values({ email: inp.email, name: inp.name, passwordHash, ...extra })
+		.returning()
+		.get();
+
 export async function acceptInvite(
 	db: Db,
 	token: string,
 	input: unknown,
-	clock: Clock = {},
+	clock: Pick<Ctx, "now"> = {},
 ) {
 	const inp = parse(registerInput, input);
 	const passwordHash = await hashPassword(inp.password);
-	const ctx = { db, now: clock.now } as Ctx;
-	return atomic(ctx, (c) => {
+	return db.transaction((tx) => {
 		const now = nowOf(clock);
-		const used = c.db
+		const used = tx
 			.update(invites)
 			.set({ usedAt: now })
 			.where(and(eq(invites.tokenHash, sha256(token)), isNull(invites.usedAt)))
@@ -150,18 +163,9 @@ export async function acceptInvite(
 			.get();
 		if (!used || used.expiresAt <= now)
 			return fail("invalid", "invite is invalid, used or expired");
-		if (c.db.select().from(users).where(eq(users.email, inp.email)).get())
+		if (tx.select().from(users).where(eq(users.email, inp.email)).get())
 			return fail("conflict", "email already registered");
-		return c.db
-			.insert(users)
-			.values({
-				email: inp.email,
-				name: inp.name,
-				passwordHash,
-				createdAt: now,
-			})
-			.returning()
-			.get();
+		return insertUser(tx, inp, passwordHash, { createdAt: now });
 	});
 }
 
@@ -172,10 +176,6 @@ export async function setupFirstAdmin(db: Db, input: unknown) {
 	return db.transaction((tx) => {
 		if ((tx.select({ n: count() }).from(users).get()?.n ?? 0) > 0)
 			return fail("conflict", "setup already done");
-		return tx
-			.insert(users)
-			.values({ email: inp.email, name: inp.name, passwordHash, role: "admin" })
-			.returning()
-			.get();
+		return insertUser(tx, inp, passwordHash, { role: "admin" });
 	});
 }

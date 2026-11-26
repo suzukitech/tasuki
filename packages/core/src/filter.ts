@@ -7,7 +7,7 @@ import {
 	statuses,
 	users,
 } from "@tasuki/db";
-import { PRIORITIES } from "@tasuki/schema";
+import { DATE_RE, PRIORITIES } from "@tasuki/schema";
 import { and, eq, inArray, isNull, ne, or, type SQL, sql } from "drizzle-orm";
 import { type Ctx, fail } from "./ctx";
 import { getProject } from "./projects";
@@ -45,17 +45,19 @@ export function parseFilter(q: string): FilterAst {
 			ast.conds.push({ key, value: raw });
 		} else if (key === "priority") {
 			const [o, v] = op(raw);
-			const n =
-				v.toLowerCase() in PRIORITIES
-					? PRIORITIES[v.toLowerCase() as keyof typeof PRIORITIES]
-					: /^[0-4]$/.test(v)
-						? Number(v)
-						: -1;
-			if (n < 0) fail("invalid", `bad priority '${v}'`);
-			ast.conds.push({ key, op: o, value: n });
+			const name = v.toLowerCase();
+			if (name in PRIORITIES)
+				ast.conds.push({
+					key,
+					op: o,
+					value: PRIORITIES[name as keyof typeof PRIORITIES],
+				});
+			else if (/^[0-4]$/.test(v))
+				ast.conds.push({ key, op: o, value: Number(v) });
+			else fail("invalid", `bad priority '${v}'`);
 		} else if (key === "due") {
 			const [o, v] = op(raw);
-			if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) fail("invalid", `bad date '${v}'`);
+			if (!DATE_RE.test(v)) fail("invalid", `bad date '${v}'`);
 			ast.conds.push({ key, op: o, value: v });
 		} else fail("invalid", `unknown filter key '${key}'`);
 	}
@@ -122,7 +124,7 @@ function condSql(ctx: Ctx, projectId: string, c: Cond): SQL {
 	}
 }
 
-export function buildIssueWhere(ctx: Ctx, projectId: string, ast: FilterAst) {
+function buildIssueWhere(ctx: Ctx, projectId: string, ast: FilterAst) {
 	return and(
 		eq(issues.projectId, projectId),
 		...ast.conds.map((c) => condSql(ctx, projectId, c)),

@@ -9,7 +9,8 @@ export const PRIORITIES = {
 } as const;
 
 const md = (max = 4000) => z.string().max(max);
-const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const date = z.string().regex(DATE_RE);
 
 export const createProjectInput = z.object({
 	key: z.string().regex(/^[A-Z]{2,10}$/),
@@ -17,62 +18,49 @@ export const createProjectInput = z.object({
 	description: md().default(""),
 });
 
-const issueFields = {
-	bodyMd: md(50000),
-	typeId: z.string(),
-	priority: z.number().int().min(0).max(4),
-	assigneeId: z.string(),
-	approverId: z.string(),
-	parentId: z.string(),
-	dueDate: date,
-	estimate: z.number().int().min(0),
-};
+const title = z.string().trim().min(1).max(200);
+const bodyMd = md(50000);
+const flow = z.enum(["ai", "simple"]);
+const labelNames = z.array(z.string().trim().min(1));
+const criterion = z.object({ text: z.string().trim().min(1).max(500) });
 
-export const createIssueInput = z.object({
-	title: z.string().trim().min(1).max(200),
-	bodyMd: issueFields.bodyMd.nullish(),
-	typeId: issueFields.typeId.nullish(),
-	priority: issueFields.priority.nullish(),
-	assigneeId: issueFields.assigneeId.nullish(),
-	approverId: issueFields.approverId.nullish(),
-	parentId: issueFields.parentId.nullish(),
-	dueDate: issueFields.dueDate.nullish(),
-	estimate: issueFields.estimate.nullish(),
-	flow: z.enum(["ai", "simple"]).default("ai"),
+/** Fields that can be left out or cleared (null). */
+const clearable = z.object({
+	typeId: z.string().nullish(),
+	priority: z.number().int().min(0).max(4).nullish(),
+	assigneeId: z.string().nullish(),
+	approverId: z.string().nullish(),
+	parentId: z.string().nullish(),
+	dueDate: date.nullish(),
+	estimate: z.number().int().min(0).nullish(),
+});
+
+export const createIssueInput = clearable.extend({
+	title,
+	bodyMd: bodyMd.nullish(),
+	flow: flow.default("ai"),
 	skipPlanReview: z.boolean().default(false),
-	labels: z.array(z.string().trim().min(1)).default([]),
+	labels: labelNames.default([]),
 });
 
 /** Clearable fields take null; title/body/flow/skipPlanReview cannot be cleared. */
-export const updateIssueInput = z.object({
-	title: z.string().trim().min(1).max(200).optional(),
-	bodyMd: issueFields.bodyMd.optional(),
-	typeId: issueFields.typeId.nullable().optional(),
-	priority: issueFields.priority.nullable().optional(),
-	assigneeId: issueFields.assigneeId.nullable().optional(),
-	approverId: issueFields.approverId.nullable().optional(),
-	parentId: issueFields.parentId.nullable().optional(),
-	dueDate: issueFields.dueDate.nullable().optional(),
-	estimate: issueFields.estimate.nullable().optional(),
-	flow: z.enum(["ai", "simple"]).optional(),
+export const updateIssueInput = clearable.extend({
+	title: title.optional(),
+	bodyMd: bodyMd.optional(),
+	flow: flow.optional(),
 	skipPlanReview: z.boolean().optional(),
-	labels: z.array(z.string().trim().min(1)).optional(),
+	labels: labelNames.optional(),
 });
 
 export const criteriaInput = z.array(
-	z.object({
-		id: z.string().optional(),
-		text: z.string().trim().min(1).max(500),
-	}),
+	criterion.extend({ id: z.string().optional() }),
 );
 
 export const planInput = z.object({
 	understandingMd: z.string().trim().min(1).max(4000),
 	stepsMd: z.string().trim().min(1).max(4000),
 	risksMd: md().default(""),
-	criteria: z
-		.array(z.object({ text: z.string().trim().min(1).max(500) }))
-		.optional(),
+	criteria: z.array(criterion).optional(),
 	mapping: z
 		.array(
 			z

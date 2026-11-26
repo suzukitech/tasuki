@@ -29,6 +29,7 @@ export const STATUS_CATEGORIES = [
 	"impl_review",
 	"done",
 ] as const;
+export type Category = (typeof STATUS_CATEGORIES)[number];
 
 export const users = sqliteTable("users", {
 	id: id(),
