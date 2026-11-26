@@ -11,7 +11,7 @@
 		"format": "biome check --write .",
 		"typecheck": "tsc --noEmit -p .",
 		"test": "bun test",
-		"check": "bun run lint && bun run typecheck && bun test --coverage --pass-with-no-tests"
+		"check": "bun run lint && bun run typecheck && bun test --coverage"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.9",
