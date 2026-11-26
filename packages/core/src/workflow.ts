@@ -1,7 +1,9 @@
 import {
 	acceptanceCriteria,
+	activities,
 	agentSessions,
 	type Category,
+	issues,
 	planCriteria,
 	plans,
 	questions,
@@ -26,8 +28,18 @@ import {
 	isNull,
 	lte,
 	type SQL,
+	sql,
 } from "drizzle-orm";
-import { atomic, type Ctx, fail, log, nowOf, parse, record } from "./ctx";
+import {
+	atomic,
+	type Ctx,
+	fail,
+	log,
+	nowOf,
+	parse,
+	record,
+	TasukiError,
+} from "./ctx";
 import {
 	insertComment,
 	type Loaded,
@@ -36,7 +48,7 @@ import {
 	patchIssue,
 	updateIssue,
 } from "./issues";
-import { requireSession } from "./permissions";
+import { requireScope, requireSession } from "./permissions";
 import { requireApprovedPlan, transition } from "./transitions";
 
 const LOCK_MS = 30 * 60 * 1000;
@@ -231,45 +243,142 @@ const slug = (s: string) =>
 		.slice(0, 40)
 		.replace(/-$/, "");
 
+/**
+ * Take (or extend) the actor's work lock on `l`. Null when someone else holds it.
+ * Does not touch the issue's status.
+ */
+function takeLock(c: Ctx, l: Loaded) {
+	const now = nowOf(c);
+	endSessions(c, l.issue.id, "expired", lte(agentSessions.expiresAt, now));
+	const open = c.db
+		.select()
+		.from(agentSessions)
+		.where(
+			and(eq(agentSessions.issueId, l.issue.id), isNull(agentSessions.endedAt)),
+		)
+		.get();
+	if (open && open.userId !== c.actor.userId) return null;
+	const expiresAt = new Date(now.getTime() + LOCK_MS);
+	return open
+		? c.db
+				.update(agentSessions)
+				.set({ expiresAt })
+				.where(eq(agentSessions.id, open.id))
+				.returning()
+				.get()
+		: c.db
+				.insert(agentSessions)
+				.values({
+					issueId: l.issue.id,
+					userId: c.actor.userId,
+					client: c.actor.via,
+					startedAt: now,
+					expiresAt,
+				})
+				.returning()
+				.get();
+}
+
+/**
+ * The actor's next AI-flow task (assigned to them, ready / in_progress): highest
+ * priority first, then oldest. Takes the work lock without changing the status.
+ * Issues locked by someone else or outside the actor's reach are skipped.
+ */
+export function claimNext(ctx: Ctx) {
+	requireScope(ctx, "write");
+	return atomic(ctx, (c) => {
+		const rows = c.db
+			.select({ id: issues.id })
+			.from(issues)
+			.innerJoin(statuses, eq(statuses.id, issues.statusId))
+			.where(
+				and(
+					eq(issues.assigneeId, c.actor.userId),
+					eq(issues.flow, "ai"),
+					inArray(statuses.category, ["ready", "in_progress"]),
+				),
+			)
+			.orderBy(
+				sql`coalesce(${issues.priority}, -1) desc`,
+				asc(issues.createdAt),
+				asc(issues.number),
+			)
+			.all();
+		for (const r of rows) {
+			let l: Loaded;
+			try {
+				l = loadIssueById(c, r.id, "member");
+			} catch (e) {
+				if (e instanceof TasukiError && e.code === "forbidden") continue;
+				throw e;
+			}
+			const session = takeLock(c, l);
+			if (session) return { ref: l.ref, session };
+		}
+		return null;
+	});
+}
+
+/** Answers to the actor's questions, plus the latest plan rejection / report return note. */
+export function getAnswers(ctx: Ctx, ref: string) {
+	const l = loadIssue(ctx, ref);
+	const id = l.issue.id;
+	const q = ctx.db.query;
+	const mine = q.questions
+		.findMany({
+			where: and(
+				eq(questions.issueId, id),
+				eq(questions.askedBy, ctx.actor.userId),
+			),
+			orderBy: asc(questions.createdAt),
+		})
+		.sync();
+	const plan = q.plans
+		.findFirst({ where: eq(plans.issueId, id), orderBy: desc(plans.version) })
+		.sync();
+	const report = q.reports
+		.findFirst({
+			where: eq(reports.issueId, id),
+			orderBy: desc(reports.createdAt),
+		})
+		.sync();
+	const returned =
+		report?.state === "returned"
+			? q.activities
+					.findFirst({
+						where: and(
+							eq(activities.issueId, id),
+							eq(activities.action, "report_returned"),
+						),
+						orderBy: [desc(activities.createdAt), desc(activities.id)],
+					})
+					.sync()
+			: undefined;
+	return {
+		ref: l.ref,
+		questions: mine.map((x) => ({
+			id: x.id,
+			state: x.state,
+			question: x.bodyMd,
+			answer: x.answerMd,
+		})),
+		planRejection:
+			plan?.state === "rejected"
+				? { version: plan.version, note: plan.reviewNote }
+				: null,
+		reportReturn: returned ? { note: returned.after } : null,
+	};
+}
+
 export function startImplementation(ctx: Ctx, ref: string) {
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
 		if (l.category !== "in_progress")
 			transition(c, l, "in_progress", "startImplementation");
 		else requireApprovedPlan(c, l); // e.g. flow switched simple -> ai mid-work
-		const now = nowOf(c);
-		endSessions(c, l.issue.id, "expired", lte(agentSessions.expiresAt, now));
-		const open = c.db
-			.select()
-			.from(agentSessions)
-			.where(
-				and(
-					eq(agentSessions.issueId, l.issue.id),
-					isNull(agentSessions.endedAt),
-				),
-			)
-			.get();
-		if (open && open.userId !== c.actor.userId)
-			fail("conflict", "another user is working on this issue");
-		const expiresAt = new Date(now.getTime() + LOCK_MS);
-		const session = open
-			? c.db
-					.update(agentSessions)
-					.set({ expiresAt })
-					.where(eq(agentSessions.id, open.id))
-					.returning()
-					.get()
-			: c.db
-					.insert(agentSessions)
-					.values({
-						issueId: l.issue.id,
-						userId: c.actor.userId,
-						client: c.actor.via,
-						startedAt: now,
-						expiresAt,
-					})
-					.returning()
-					.get();
+		const session = takeLock(c, l);
+		if (!session)
+			return fail("conflict", "another user is working on this issue");
 		announce(c, l, "issue.started");
 		const s = slug(l.issue.title);
 		return { session, branch: s ? `${l.ref}-${s}` : l.ref };

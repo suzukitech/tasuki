@@ -1,3 +1,4 @@
+import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
 	type Actor,
 	acceptInvite,
@@ -41,6 +42,7 @@ import {
 	updateProject,
 } from "@tasuki/core";
 import type { Db } from "@tasuki/db";
+import { createMcpServer } from "@tasuki/mcp";
 import {
 	answerInput,
 	commentInput,
@@ -185,6 +187,18 @@ export function createApp(
 		setCookie(c, SESSION, session, { ...base, httpOnly: true });
 		setCookie(c, CSRF, csrfOf(session), { ...base, httpOnly: false });
 	};
+	/** Resolve a Bearer token with the shared bad-token rate limit. `via` is the default. */
+	const bearerActor = (c: C, token: string, via: string, client?: string) => {
+		const ip = c.get("ip");
+		if (limiter.blocked(ip, ipMax)) throw tooMany();
+		const name = (client ?? c.req.header("x-tasuki-client") ?? "")
+			.replace(/[^\w.-]/g, "")
+			.slice(0, 40);
+		const actor = resolveToken(db, token, name ? `mcp:${name}` : via);
+		if (!actor) limiter.hit(ip);
+		else c.set("cred", { kind: "token", hash: sha256(token) });
+		return actor;
+	};
 	const ctxOf = (c: C) => c.get("ctx");
 
 	/** `:ref` + JSON body → core. 204 when core returns nothing. */
@@ -234,17 +248,7 @@ export function createApp(
 		);
 		let actor: Actor | null = null;
 		if (bearer) {
-			if (limiter.blocked(ip, ipMax)) throw tooMany();
-			const client = (c.req.header("x-tasuki-client") ?? "")
-				.replace(/[^\w.-]/g, "")
-				.slice(0, 40);
-			actor = resolveToken(
-				db,
-				bearer[1] ?? "",
-				client ? `mcp:${client}` : "cli",
-			);
-			if (!actor) limiter.hit(ip);
-			else c.set("cred", { kind: "token", hash: sha256(bearer[1] ?? "") });
+			actor = bearerActor(c, bearer[1] ?? "", "cli");
 		} else {
 			const session = getCookie(c, SESSION);
 			actor = session ? resolveSession(db, session) : null;
@@ -461,6 +465,63 @@ export function createApp(
 				await s.writeSSE({ event: "ping", data: "" });
 			}
 		});
+	});
+
+	// --- MCP (Streamable HTTP, stateless: a fresh server + transport per request) ---
+	app.all("/mcp", async (c) => {
+		c.set("ip", ipOf(c));
+		const bearer = /^Bearer\s+(\S+)$/i.exec(
+			c.req.header("authorization") ?? "",
+		);
+		// bearer only: a cookie session must never reach MCP (CSRF-able, and not an AI client)
+		if (!bearer) throw new TasukiError("unauthorized", "Bearer token required");
+		if (c.req.method !== "POST")
+			return c.json(
+				{
+					jsonrpc: "2.0",
+					error: {
+						code: -32000,
+						message: "Method not allowed (stateless server: POST only)",
+					},
+					id: null,
+				},
+				405,
+				{ allow: "POST" },
+			);
+		const text = await c.req.text();
+		if (text.length > 1_000_000)
+			throw new TasukiError("invalid", "request too large");
+		let body: unknown;
+		try {
+			body = JSON.parse(text);
+		} catch {
+			body = undefined; // the transport answers with a JSON-RPC parse error
+		}
+		const hello = (Array.isArray(body) ? body : [body]).find(
+			(m) => (m as { method?: string } | undefined)?.method === "initialize",
+		) as { params?: { clientInfo?: { name?: unknown } } } | undefined;
+		const name = hello?.params?.clientInfo?.name;
+		const actor = bearerActor(
+			c,
+			bearer[1] ?? "",
+			"mcp:mcp",
+			typeof name === "string" && name ? name : undefined,
+		);
+		if (!actor)
+			throw new TasukiError("unauthorized", "authentication required");
+		const server = createMcpServer(
+			{ db, actor, emit: events.publish },
+			{ baseUrl },
+		);
+		const transport = new WebStandardStreamableHTTPServerTransport({
+			enableJsonResponse: true,
+		});
+		await server.connect(transport);
+		try {
+			return await transport.handleRequest(c.req.raw, { parsedBody: body });
+		} finally {
+			await server.close();
+		}
 	});
 
 	app.route("/api/v1", api);

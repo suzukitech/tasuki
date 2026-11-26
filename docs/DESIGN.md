@@ -314,7 +314,7 @@ claude mcp add --transport http tasuki https://tasuki.example.com/mcp --header "
 | `start_implementation`      | 承認済み計画があるときだけ成功し、推奨ブランチ名（`WEB-12-login-fix`）を返す                                 | 実装       |
 | `record_evidence`           | 受け入れ条件ごとに結果と証拠を記録                                                                           | 検証       |
 | `submit_report`             | 実装レポートを提出。未記録の条件があれば拒否。「結果確認」へ進む                                             | 報告       |
-| `create_tasks`              | 大きなチケットを子チケットに分解して「下書き」で作る。`dry_run` 可                                           | 起票の補助 |
+| `create_tasks`              | **v0.2に回す（Phase 5では未実装）**。大きなチケットを子チケットに分解して「下書き」で作る。`dry_run` 可      | 起票の補助 |
 | `search_issues` / `comment` | 検索と普通のコメント                                                                                         | 全段階     |
 
 **安全のための決めごと**
@@ -333,6 +333,8 @@ claude mcp add --transport http tasuki https://tasuki.example.com/mcp --header "
 - 未回答の質問があるチケットは、計画もレポートも提出できない。
 - 作業ロックの有効期限は30分で、MCPを呼ぶたびに延長する。AIが止まっても、チケットが抜けなくならない。
 - 計画を提出したら、AIは承認画面のURLを担当者に表示する（ツールの戻り値に含める）。担当者と承認者が同じ人なら、1クリックで承認できる。
+
+**実装メモ（Phase 5）**: `/mcp` はステートレスなStreamable HTTP（リクエストごとにサーバーを作り、セッションIDを持たない。JSON応答）。認証はBearerトークンのみで、Cookieだけのリクエストは401。`GET` / `DELETE` は405。`via` は `mcp:<クライアント名>`（`X-Tasuki-Client`、なければ `mcp:mcp`）。`next_task` は作業ロックだけ取り、状態は変えない。作業ロックの延長は、チケットを指定する全ツール呼び出しで中央処理する。
 
 **MCPリソースとプロンプト**: `tasuki://issue/WEB-12` でチケットを参照できるようにします。また、「仕様からチケットを切る」「今日着手すべきものを選ぶ」の2つをプロンプトとして同梱します。
 

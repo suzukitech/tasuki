@@ -12,6 +12,16 @@ Tasuki は、Claude Code などのコーディングエージェントが実装�
 
 **ステータス: 開発中（v0.1 未リリース）。** 設計は [docs/DESIGN.md](docs/DESIGN.md) を参照してください。
 
+## Claude Code から使う
+
+設定画面でアクセストークンを発行し、次の1行で接続します。
+
+```
+claude mcp add --transport http tasuki https://<your-host>/mcp --header "Authorization: Bearer tsk_..."
+```
+
+計画の承認と完了はブラウザからだけです。AIは `submit_plan` が返すURLをあなたに見せて待ちます。
+
 ## 開発
 
 ```sh
