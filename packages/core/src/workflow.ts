@@ -9,6 +9,7 @@ import {
 	statuses,
 } from "@tasuki/db";
 import {
+	bulkInput,
 	criteriaInput,
 	evidenceInput,
 	noteInput,
@@ -33,6 +34,7 @@ import {
 	loadIssue,
 	loadIssueById,
 	patchIssue,
+	updateIssue,
 } from "./issues";
 import { requireSession } from "./permissions";
 import { requireApprovedPlan, transition } from "./transitions";
@@ -612,4 +614,19 @@ export function whoseTurn(
 		default:
 			return null;
 	}
+}
+
+/** assignee / status / labels for many issues, all or nothing. */
+export function bulkUpdate(ctx: Ctx, input: unknown) {
+	const { refs, statusId, ...fields } = parse(bulkInput, input);
+	return atomic(ctx, (c) => {
+		const edit = Object.fromEntries(
+			Object.entries(fields).filter(([, v]) => v !== undefined),
+		);
+		for (const ref of refs) {
+			if (Object.keys(edit).length) updateIssue(c, ref, edit);
+			if (statusId) moveIssue(c, ref, { statusId });
+		}
+		return refs;
+	});
 }

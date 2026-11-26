@@ -1,0 +1,14 @@
+{
+	"name": "@tasuki/server",
+	"private": true,
+	"type": "module",
+	"exports": {
+		".": "./src/app.ts"
+	},
+	"dependencies": {
+		"@tasuki/core": "workspace:*",
+		"@tasuki/db": "workspace:*",
+		"hono": "^4.13",
+		"zod": "^4"
+	}
+}

@@ -353,7 +353,7 @@ export function updateIssue(
 			opts.ifMatch !== undefined &&
 			opts.ifMatch !== issue.updatedAt.getTime()
 		)
-			fail("conflict", "issue was changed by someone else");
+			fail("precondition", "issue was changed by someone else");
 		guardGateFields(c, inp, issue);
 		checkRefs(c, project.id, inp, issue, issue.id);
 		if (inp.flow && inp.flow !== issue.flow && !TRANSITIONS[inp.flow][category])
@@ -438,4 +438,26 @@ export function parseQuickTitle(text: string) {
 	}
 	out.title = words.join(" ");
 	return out;
+}
+
+/** Comments of an issue, oldest first. */
+export function listComments(ctx: Ctx, ref: string) {
+	const { issue } = loadIssue(ctx, ref);
+	return ctx.db
+		.select()
+		.from(comments)
+		.where(eq(comments.issueId, issue.id))
+		.orderBy(asc(comments.createdAt))
+		.all();
+}
+
+/** Change history of an issue, oldest first. */
+export function listActivities(ctx: Ctx, ref: string) {
+	const { issue } = loadIssue(ctx, ref);
+	return ctx.db
+		.select()
+		.from(activities)
+		.where(eq(activities.issueId, issue.id))
+		.orderBy(asc(activities.createdAt))
+		.all();
 }

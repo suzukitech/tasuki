@@ -1,13 +1,20 @@
 import {
 	createDefaultIssueTypes,
 	createDefaultStatuses,
+	issueTypes,
 	projectMembers,
 	projects,
+	statuses,
 } from "@tasuki/db";
 import { createProjectInput } from "@tasuki/schema";
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { atomic, type Ctx, fail, parse } from "./ctx";
-import { type Role, requireProjectRole, requireScope } from "./permissions";
+import {
+	projectRole,
+	type Role,
+	requireProjectRole,
+	requireScope,
+} from "./permissions";
 
 export function createProject(ctx: Ctx, input: unknown) {
 	const inp = parse(createProjectInput, input);
@@ -65,4 +72,55 @@ export function setMember(
 			set: { role },
 		})
 		.run();
+}
+
+/** Projects the actor can read (token project restriction applies). */
+export function listProjects(ctx: Ctx) {
+	requireScope(ctx, "read");
+	const only = ctx.actor.token?.projectIds;
+	return ctx.db
+		.select()
+		.from(projects)
+		.all()
+		.filter((p) => !only || only.includes(p.id))
+		.flatMap((p) => {
+			const role = projectRole(ctx, p.id);
+			return role ? [{ ...p, role }] : [];
+		});
+}
+
+const updateProjectInput = createProjectInput
+	.pick({ name: true, description: true })
+	.partial();
+
+export function updateProject(ctx: Ctx, key: string, patch: unknown) {
+	const inp = parse(updateProjectInput, patch);
+	const p = getProject(ctx, key, "manager");
+	return Object.keys(inp).length
+		? ctx.db
+				.update(projects)
+				.set(inp)
+				.where(eq(projects.id, p.id))
+				.returning()
+				.get()
+		: p;
+}
+
+/** Project plus the statuses and issue types a UI needs to render and move issues. */
+export function projectDetail(ctx: Ctx, key: string) {
+	const p = getProject(ctx, key);
+	return {
+		...p,
+		statuses: ctx.db
+			.select()
+			.from(statuses)
+			.where(eq(statuses.projectId, p.id))
+			.orderBy(asc(statuses.position))
+			.all(),
+		issueTypes: ctx.db
+			.select()
+			.from(issueTypes)
+			.where(eq(issueTypes.projectId, p.id))
+			.all(),
+	};
 }

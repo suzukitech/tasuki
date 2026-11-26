@@ -108,3 +108,10 @@ export const registerInput = z.object({
 	name: z.string().trim().min(1).max(100),
 	password: z.string().min(8).max(200),
 });
+
+export const bulkInput = z.object({
+	refs: z.array(z.string()).min(1).max(100),
+	assigneeId: z.string().nullish(),
+	statusId: z.string().optional(),
+	labels: labelNames.optional(),
+});

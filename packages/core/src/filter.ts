@@ -9,7 +9,18 @@ import {
 	users,
 } from "@tasuki/db";
 import { DATE_RE, PRIORITIES, PRIORITY_MAX } from "@tasuki/schema";
-import { and, eq, inArray, isNull, ne, or, type SQL, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	inArray,
+	isNull,
+	lt,
+	ne,
+	or,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 import { type Ctx, fail } from "./ctx";
 import { getProject } from "./projects";
 
@@ -149,4 +160,32 @@ export function searchIssues(
 		.orderBy(issues.number)
 		.limit(limit)
 		.all();
+}
+
+/** Newest first. `cursor` = the last issue number of the previous page. */
+export function pageIssues(
+	ctx: Ctx,
+	projectKey: string,
+	q: string,
+	opts: { cursor?: number; limit?: number } = {},
+) {
+	const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+	const project = getProject(ctx, projectKey);
+	const rows = ctx.db
+		.select()
+		.from(issues)
+		.where(
+			and(
+				buildIssueWhere(ctx, project.id, parseFilter(q)),
+				opts.cursor === undefined ? undefined : lt(issues.number, opts.cursor),
+			),
+		)
+		.orderBy(desc(issues.number))
+		.limit(limit + 1)
+		.all();
+	const items = rows.slice(0, limit);
+	return {
+		items,
+		nextCursor: rows.length > limit ? (items.at(-1)?.number ?? null) : null,
+	};
 }

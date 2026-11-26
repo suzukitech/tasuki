@@ -353,9 +353,16 @@ Web UI、CLI、外部連携はすべて `/api/v1` を使います。認証はWeb
 | GET                  | `/events`                 | SSE。参加プロジェクトの変更を配信                      |
 | POST / DELETE        | `/me/tokens`              | アクセストークンの発行と失効                           |
 
-- 更新は `If-Match`（`updated_at` ベースのETag）で楽観ロック。人とAIが同時に同じチケットを変えても上書きしない。
-- エラーは RFC 9457（Problem Details）形式。
-- OpenAPI定義をZodから生成し、`/api/docs` で公開する。
+- 更新は `If-Match`（`updated_at` ベースのETag）で楽観ロック。人とAIが同時に同じチケットを変えても上書きしない。`GET /issues/:ref` が `ETag: "<updatedAtのms>"` を返し、`PATCH` の `If-Match` が一致しなければ **412 Precondition Failed**（`code: "precondition"`）。
+- エラーは RFC 9457（Problem Details）形式（`application/problem+json`: `type` / `title` / `status` / `detail` ＋ `code`）。
+- チケット一覧は `?q=`（フィルタ書式）＋ `?cursor=<チケット番号>&limit=`（番号の降順）。応答は `{items, nextCursor}`。
+- 追加ルート（Web UI用）: `GET /health`、`GET /setup/status`、`POST /setup`、`POST /auth/login`、`POST /auth/logout`、`POST /invites`（管理者）、`POST /invites/accept`、`GET /me`、`GET /me/tokens`、`DELETE /me/tokens/:id`、ワークフロー操作 `POST /issues/:ref/plan/approve`・`plan/reject`・`report/accept`・`report/return`・`complete`、`PUT /issues/:ref/criteria`、`POST /questions/:id/answer`。これらの人間ゲートはセッションのみ通る（トークンは409 `gate`）。
+- `POST /me/tokens` は平文トークンを1回だけ返し、そのまま貼れる `claudeMcpAdd`（`claude mcp add --transport http ...`）も返す。
+- CSRF: Cookie認証の更新系リクエストは `X-Tasuki-CSRF` ヘッダが必要。値はセッションごとに決まり、ログイン時に非HttpOnlyの `tasuki_csrf` Cookieで渡す（ダブルサブミット）。Bearerトークンは不要。
+- ログイン失敗とトークン認証失敗はIPごとに1分10回まででレート制限（429）。単一プロセスのメモリ内カウンタ。
+- `GET /events`（SSE）はプロセス内pub/sub。購読者は読める権限のあるプロジェクトのイベントだけ受け取る。25秒ごとにハートビート。
+- `TASUKI_SECRET` はサーバー側のHMAC署名などが必要になるまで生成しない（セッション・トークン・CSRFはすべてランダム値＋DBのハッシュで足り、秘密鍵を使わない）。
+- OpenAPI定義をZodから生成し、`/api/docs` で公開する。**ドキュメントのフェーズまで保留**（Phase 4では作らない）。
 
 ## Web UI設計
 

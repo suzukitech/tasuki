@@ -180,3 +180,65 @@ export async function setupFirstAdmin(db: Db, input: unknown) {
 		return insertUser(tx, inp, passwordHash, { role: "admin" });
 	});
 }
+
+export const needsSetup = (db: Db) =>
+	(db.select({ n: count() }).from(users).get()?.n ?? 0) === 0;
+
+/** The signed-in user (never includes the password hash). */
+export function getMe(ctx: Ctx) {
+	const u = ctx.db
+		.select()
+		.from(users)
+		.where(eq(users.id, ctx.actor.userId))
+		.get();
+	if (!u) return fail("not_found", "user not found");
+	return {
+		id: u.id,
+		email: u.email,
+		name: u.name,
+		role: u.role,
+		locale: u.locale,
+	};
+}
+
+export function destroySession(db: Db, plaintext: string) {
+	db.delete(sessions)
+		.where(eq(sessions.tokenHash, sha256(plaintext)))
+		.run();
+}
+
+/** The caller's tokens (metadata only: the plaintext is unrecoverable). */
+export function listApiTokens(ctx: Ctx) {
+	requireSession(ctx, "listing access tokens");
+	return ctx.db
+		.select({
+			id: apiTokens.id,
+			name: apiTokens.name,
+			scopes: apiTokens.scopes,
+			projectIds: apiTokens.projectIds,
+			lastUsedAt: apiTokens.lastUsedAt,
+			expiresAt: apiTokens.expiresAt,
+			revokedAt: apiTokens.revokedAt,
+			createdAt: apiTokens.createdAt,
+		})
+		.from(apiTokens)
+		.where(eq(apiTokens.userId, ctx.actor.userId))
+		.all();
+}
+
+export function revokeApiToken(ctx: Ctx, id: string) {
+	requireSession(ctx, "revoking an access token");
+	const r = ctx.db
+		.update(apiTokens)
+		.set({ revokedAt: nowOf(ctx) })
+		.where(
+			and(
+				eq(apiTokens.id, id),
+				eq(apiTokens.userId, ctx.actor.userId),
+				isNull(apiTokens.revokedAt),
+			),
+		)
+		.returning({ id: apiTokens.id })
+		.get();
+	if (!r) fail("not_found", "token not found");
+}

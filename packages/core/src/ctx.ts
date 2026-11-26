@@ -20,6 +20,7 @@ const STATUS = {
 	conflict: 409,
 	invalid: 400,
 	gate: 409,
+	precondition: 412,
 } as const;
 
 export class TasukiError extends Error {
