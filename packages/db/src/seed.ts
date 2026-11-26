@@ -1,8 +1,8 @@
 import { generateNKeysBetween } from "fractional-indexing";
-import type { Db } from "./index";
+import type { Conn, Db } from "./index";
 
 /** A db handle or a transaction: anything with insert/select. */
-type Tx = Pick<Db, "insert">;
+type Tx = Pick<Conn, "insert">;
 
 import {
 	issues,

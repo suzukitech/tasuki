@@ -7,8 +7,8 @@ import {
 	openDb,
 	searchIssueIds,
 	users,
-} from "./index";
-import { seedSampleProject } from "./seed";
+} from "../src/index";
+import { seedSampleProject } from "../src/seed";
 
 function setup() {
 	const db = openDb(":memory:");
