@@ -51,10 +51,11 @@ export function resolveToken(
 		.where(eq(apiTokens.tokenHash, sha256(plaintext)))
 		.get();
 	if (!t || t.revokedAt || (t.expiresAt && t.expiresAt <= now)) return null;
-	db.update(apiTokens)
-		.set({ lastUsedAt: now })
-		.where(eq(apiTokens.id, t.id))
-		.run();
+	if (!t.lastUsedAt || now.getTime() - t.lastUsedAt.getTime() > 60_000)
+		db.update(apiTokens)
+			.set({ lastUsedAt: now })
+			.where(eq(apiTokens.id, t.id))
+			.run();
 	return {
 		userId: t.userId,
 		via,

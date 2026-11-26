@@ -1,4 +1,4 @@
-import { activities, type Db } from "@tasuki/db";
+import { activities, type Conn } from "@tasuki/db";
 import type { tokenInput } from "@tasuki/schema";
 import type { z } from "zod";
 
@@ -12,7 +12,7 @@ export type Actor = {
 		projectIds: string[] | null;
 	};
 };
-export type Ctx = { db: Db; actor: Actor; now?: () => Date };
+export type Ctx = { db: Conn; actor: Actor; now?: () => Date };
 
 const STATUS = {
 	not_found: 404,
@@ -41,8 +41,7 @@ export const nowOf = (ctx: { now?: () => Date }) =>
 
 /** Run `fn` in a transaction. Nested calls become savepoints. */
 export function atomic<T>(ctx: Ctx, fn: (c: Ctx) => T): T {
-	// the drizzle transaction handle has the same query API as Db
-	return ctx.db.transaction((tx) => fn({ ...ctx, db: tx as unknown as Db }));
+	return ctx.db.transaction((tx) => fn({ ...ctx, db: tx }));
 }
 
 export function parse<T extends z.ZodType>(
@@ -64,7 +63,34 @@ const text = (v: unknown) =>
 			? v
 			: JSON.stringify(v);
 
-/** Append an activity row (who/via/what changed) for an issue. */
+type Entry = {
+	action: string;
+	field?: string;
+	before?: unknown;
+	after?: unknown;
+};
+
+/** Append activity rows (who/via/what changed) for an issue in one insert. */
+export function logAll(ctx: Ctx, issueId: string, entries: Entry[]) {
+	if (!entries.length) return;
+	const createdAt = nowOf(ctx);
+	ctx.db
+		.insert(activities)
+		.values(
+			entries.map((e) => ({
+				issueId,
+				actorId: ctx.actor.userId,
+				via: ctx.actor.via,
+				action: e.action,
+				field: e.field ?? null,
+				before: text(e.before),
+				after: text(e.after),
+				createdAt,
+			})),
+		)
+		.run();
+}
+
 export function log(
 	ctx: Ctx,
 	issueId: string,
@@ -73,17 +99,5 @@ export function log(
 	before?: unknown,
 	after?: unknown,
 ) {
-	ctx.db
-		.insert(activities)
-		.values({
-			issueId,
-			actorId: ctx.actor.userId,
-			via: ctx.actor.via,
-			action,
-			field: field ?? null,
-			before: text(before),
-			after: text(after),
-			createdAt: nowOf(ctx),
-		})
-		.run();
+	logAll(ctx, issueId, [{ action, field, before, after }]);
 }

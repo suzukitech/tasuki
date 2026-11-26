@@ -18,7 +18,6 @@ import {
 import {
 	and,
 	asc,
-	count,
 	desc,
 	eq,
 	gt,
@@ -34,19 +33,33 @@ import {
 	loadIssue,
 	loadIssueById,
 	patchIssue,
-	setCategory,
 } from "./issues";
 import { requireSession } from "./permissions";
+import { transition } from "./transitions";
 
 const LOCK_MS = 30 * 60 * 1000;
 const reviewUrl = (ref: string, tab: string) => `/issues/${ref}?tab=${tab}`;
 
-const openQuestionCount = (c: Ctx, issueId: string) =>
-	c.db
-		.select({ n: count() })
+const hasOpenQuestion = (c: Ctx, issueId: string) =>
+	!!c.db
+		.select({ id: questions.id })
 		.from(questions)
 		.where(and(eq(questions.issueId, issueId), eq(questions.state, "open")))
-		.get()?.n ?? 0;
+		.limit(1)
+		.get();
+
+const hasPendingCriterion = (c: Ctx, issueId: string) =>
+	!!c.db
+		.select({ id: acceptanceCriteria.id })
+		.from(acceptanceCriteria)
+		.where(
+			and(
+				eq(acceptanceCriteria.issueId, issueId),
+				eq(acceptanceCriteria.result, "pending"),
+			),
+		)
+		.limit(1)
+		.get();
 
 const criteriaOf = (c: Ctx, issueId: string) =>
 	c.db
@@ -83,13 +96,6 @@ function endSessions(
 		.run();
 }
 
-/** Approver, project manager or system admin (the latter two are `manager`). */
-function requireApprover(c: Ctx, l: Loaded) {
-	const manager = l.role === "manager";
-	if (!manager && l.issue.approverId !== c.actor.userId)
-		fail("forbidden", "approver or project manager only");
-}
-
 function requireState(l: Loaded, ...cats: Category[]) {
 	if (!cats.includes(l.category))
 		fail(
@@ -104,12 +110,11 @@ export function submitPlan(ctx: Ctx, ref: string, input: unknown) {
 		const l = loadIssue(c, ref, "member");
 		if (l.issue.flow !== "ai")
 			fail("invalid", "simple-flow issues have no plan");
-		requireState(l, "ready");
-		if (openQuestionCount(c, l.issue.id))
+		if (hasOpenQuestion(c, l.issue.id))
 			fail("gate", "answer open questions before submitting a plan");
 		let crits = criteriaOf(c, l.issue.id);
 		if (!crits.length && inp.criteria?.length) {
-			c.db
+			crits = c.db
 				.insert(acceptanceCriteria)
 				.values(
 					inp.criteria.map((x, position) => ({
@@ -118,15 +123,15 @@ export function submitPlan(ctx: Ctx, ref: string, input: unknown) {
 						position,
 					})),
 				)
-				.run();
-			crits = criteriaOf(c, l.issue.id);
+				.returning()
+				.all();
 		}
 		const mapped = new Map<string, string>();
 		for (const m of inp.mapping) {
-			const id = m.criterionId ?? crits[m.index as number]?.id;
+			const id = m.criterionId ?? crits[m.index ?? -1]?.id;
 			if (!id || !crits.some((x) => x.id === id))
-				fail("invalid", "mapping refers to an unknown criterion");
-			mapped.set(id as string, m.stepRef);
+				return fail("invalid", "mapping refers to an unknown criterion");
+			mapped.set(id, m.stepRef);
 		}
 		// older proposed/approved plans no longer apply
 		c.db
@@ -162,18 +167,21 @@ export function submitPlan(ctx: Ctx, ref: string, input: unknown) {
 				.insert(planCriteria)
 				.values({ planId: plan.id, criterionId, stepRef })
 				.run();
-		setCategory(c, l, "plan_review");
+		transition(c, l, "plan_review", "submitPlan");
 		log(c, l.issue.id, "plan_submitted", "plan", null, `v${plan.version}`);
 		return { plan, reviewUrl: reviewUrl(l.ref, "plan") };
 	});
 }
 
 function reviewPlan(ctx: Ctx, ref: string, approve: boolean, note?: string) {
-	requireSession(ctx, approve ? "approving a plan" : "rejecting a plan");
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
-		requireApprover(c, l);
-		requireState(l, "plan_review");
+		transition(
+			c,
+			l,
+			approve ? "in_progress" : "ready",
+			approve ? "approvePlan" : "rejectPlan",
+		);
 		const plan = planIn(c, l.issue.id, "proposed");
 		if (!plan) return fail("conflict", "no proposed plan");
 		c.db
@@ -185,7 +193,6 @@ function reviewPlan(ctx: Ctx, ref: string, approve: boolean, note?: string) {
 			})
 			.where(eq(plans.id, plan.id))
 			.run();
-		setCategory(c, l, approve ? "in_progress" : "ready");
 		log(
 			c,
 			l.issue.id,
@@ -219,13 +226,8 @@ const slug = (s: string) =>
 export function startImplementation(ctx: Ctx, ref: string) {
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
-		if (
-			l.issue.flow === "ai" &&
-			!l.issue.skipPlanReview &&
-			!planIn(c, l.issue.id, "approved")
-		)
-			fail("gate", "no approved plan: submit a plan and get it approved first");
-		requireState(l, "ready", "in_progress");
+		if (l.category !== "in_progress")
+			transition(c, l, "in_progress", "startImplementation");
 		const now = nowOf(c);
 		endSessions(c, l.issue.id, "expired", lte(agentSessions.expiresAt, now));
 		const open = c.db
@@ -259,7 +261,6 @@ export function startImplementation(ctx: Ctx, ref: string) {
 					})
 					.returning()
 					.get();
-		if (l.category === "ready") setCategory(c, l, "in_progress");
 		const s = slug(l.issue.title);
 		return { session, branch: s ? `${l.ref}-${s}` : l.ref };
 	});
@@ -405,7 +406,7 @@ export function updateCriteria(ctx: Ctx, ref: string, criteria: unknown) {
 				.where(eq(plans.id, approved.id))
 				.run();
 			endSessions(c, l.issue.id, "plan_revoked");
-			setCategory(c, l, "plan_review");
+			transition(c, l, "plan_review", "updateCriteria");
 			log(
 				c,
 				l.issue.id,
@@ -429,7 +430,14 @@ export function recordEvidence(
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
 		requireState(l, "in_progress", "impl_review");
-		const crit = criteriaOf(c, l.issue.id).find((x) => x.id === criterionId);
+		const crit = c.db.query.acceptanceCriteria
+			.findFirst({
+				where: and(
+					eq(acceptanceCriteria.id, criterionId),
+					eq(acceptanceCriteria.issueId, l.issue.id),
+				),
+			})
+			.sync();
 		if (!crit) return fail("not_found", "criterion not found on this issue");
 		const row = c.db
 			.update(acceptanceCriteria)
@@ -457,10 +465,9 @@ export function submitReport(ctx: Ctx, ref: string, input: unknown) {
 	const inp = parse(reportInput, input);
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
-		requireState(l, "in_progress");
-		if (openQuestionCount(c, l.issue.id))
+		if (hasOpenQuestion(c, l.issue.id))
 			fail("gate", "answer open questions before reporting");
-		if (criteriaOf(c, l.issue.id).some((x) => x.result === "pending"))
+		if (hasPendingCriterion(c, l.issue.id))
 			fail("gate", "record evidence for every acceptance criterion first");
 		const report = c.db
 			.insert(reports)
@@ -473,10 +480,31 @@ export function submitReport(ctx: Ctx, ref: string, input: unknown) {
 			.returning()
 			.get();
 		endSessions(c, l.issue.id, "reported");
-		setCategory(c, l, "impl_review");
+		transition(c, l, "impl_review", "submitReport");
 		log(c, l.issue.id, "report_submitted");
 		return { report, reviewUrl: reviewUrl(l.ref, "report") };
 	});
+}
+
+/** Finish `l` (shared by completeIssue and a drag to a done status). */
+function complete(
+	c: Ctx,
+	l: Loaded,
+	op: "complete" | "move",
+	opts: { target?: typeof statuses.$inferSelect; rank?: string } = {},
+) {
+	if (l.category === "done") fail("conflict", "already done");
+	transition(c, l, "done", op, opts);
+	if (l.issue.flow === "ai")
+		c.db
+			.update(reports)
+			.set({ state: "accepted" })
+			.where(
+				and(eq(reports.issueId, l.issue.id), eq(reports.state, "submitted")),
+			)
+			.run();
+	endSessions(c, l.issue.id, "completed");
+	log(c, l.issue.id, "completed");
 }
 
 /**
@@ -488,35 +516,19 @@ export function completeIssue(
 	ref: string,
 	opts: { statusId?: string; rank?: string } = {},
 ) {
-	requireSession(ctx, "completing an issue");
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
-		if (l.category === "done") fail("conflict", "already done");
-		if (l.issue.flow === "ai") {
-			requireState(l, "impl_review");
-			requireApprover(c, l);
-			c.db
-				.update(reports)
-				.set({ state: "accepted" })
-				.where(
-					and(eq(reports.issueId, l.issue.id), eq(reports.state, "submitted")),
-				)
-				.run();
-		}
-		endSessions(c, l.issue.id, "completed");
-		setCategory(c, l, "done", opts);
-		log(c, l.issue.id, "completed");
+		const target = opts.statusId ? statusIn(c, l, opts.statusId) : undefined;
+		complete(c, l, "complete", { target, rank: opts.rank });
 	});
 }
 
 /** HUMAN GATE (session only). */
 export function returnReport(ctx: Ctx, ref: string, note: string) {
-	requireSession(ctx, "returning a report");
 	const text = parse(noteInput, note);
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
-		requireState(l, "impl_review");
-		requireApprover(c, l);
+		transition(c, l, "in_progress", "returnReport");
 		c.db
 			.update(reports)
 			.set({ state: "returned" })
@@ -525,9 +537,17 @@ export function returnReport(ctx: Ctx, ref: string, note: string) {
 			)
 			.run();
 		insertComment(c, l.issue.id, text);
-		setCategory(c, l, "in_progress");
 		log(c, l.issue.id, "report_returned", undefined, undefined, text);
 	});
+}
+
+function statusIn(c: Ctx, l: Loaded, statusId: string) {
+	const target = c.db.query.statuses
+		.findFirst({ where: eq(statuses.id, statusId) })
+		.sync();
+	if (target?.projectId !== l.project.id)
+		return fail("invalid", "unknown status");
+	return target;
 }
 
 /** Drag-and-drop style move. Gated transitions must go through their workflow function. */
@@ -538,37 +558,13 @@ export function moveIssue(
 ) {
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
-		const target = c.db
-			.select()
-			.from(statuses)
-			.where(eq(statuses.id, input.statusId))
-			.get();
-		if (target?.projectId !== l.project.id)
-			return fail("invalid", "unknown status");
-		const to = target.category;
-		if (to === "done" && l.category !== "done")
-			return completeIssue(c, ref, input);
-		if (to !== l.category) {
-			if (l.category === "plan_review" || l.category === "impl_review")
-				fail(
-					"gate",
-					"use approve/reject (plan) or accept/return (report) to leave a review state",
-				);
-			if (to === "plan_review" || to === "impl_review")
-				fail(
-					"invalid",
-					"use submitPlan / submitReport to enter a review state",
-				);
-			if (
-				to === "in_progress" &&
-				l.issue.flow === "ai" &&
-				!l.issue.skipPlanReview &&
-				!planIn(c, l.issue.id, "approved")
-			)
-				fail("gate", "no approved plan");
-			if (l.category === "in_progress") endSessions(c, l.issue.id, "moved");
-		}
-		setCategory(c, l, to, input);
+		const target = statusIn(c, l, input.statusId);
+		const opts = { target, rank: input.rank };
+		if (target.category === "done" && l.category !== "done")
+			return complete(c, l, "move", opts);
+		transition(c, l, target.category, "move", opts);
+		if (l.category === "in_progress" && target.category !== l.category)
+			endSessions(c, l.issue.id, "moved");
 	});
 }
 

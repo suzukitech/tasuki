@@ -1,4 +1,5 @@
 import {
+	escapeLike,
 	issueLabels,
 	issues,
 	labels,
@@ -7,12 +8,13 @@ import {
 	statuses,
 	users,
 } from "@tasuki/db";
-import { DATE_RE, PRIORITIES } from "@tasuki/schema";
+import { DATE_RE, PRIORITIES, PRIORITY_MAX } from "@tasuki/schema";
 import { and, eq, inArray, isNull, ne, or, type SQL, sql } from "drizzle-orm";
 import { type Ctx, fail } from "./ctx";
 import { getProject } from "./projects";
 
-type Op = ">=" | "<=" | ">" | "<" | "=";
+const OPS = [">=", "<=", ">", "<", "="] as const;
+type Op = (typeof OPS)[number];
 export type Cond =
 	| { key: "status" | "assignee" | "label"; value: string }
 	| { key: "priority"; op: Op; value: number }
@@ -20,8 +22,8 @@ export type Cond =
 export type FilterAst = { conds: Cond[]; terms: string[] };
 
 const op = (v: string): [Op, string] => {
-	const m = /^(>=|<=|>|<|=)?(.*)$/.exec(v) as RegExpExecArray;
-	return [(m[1] ?? "=") as Op, m[2] as string];
+	const [, o, rest = ""] = /^(>=|<=|>|<|=)?(.*)$/.exec(v) ?? [];
+	return [OPS.find((x) => x === o) ?? "=", rest];
 };
 
 /** `status:open assignee:me priority:>=high due:<2026-12-31 label:bug "free text" word` */
@@ -32,14 +34,14 @@ export function parseFilter(q: string): FilterAst {
 			if (m[1].trim()) ast.terms.push(m[1].trim());
 			continue;
 		}
-		const tok = m[2] as string;
+		const tok = m[2] ?? "";
 		const kv = /^([A-Za-z]+):(.*)$/.exec(tok);
 		if (!kv) {
 			ast.terms.push(tok);
 			continue;
 		}
-		const key = (kv[1] as string).toLowerCase();
-		const raw = kv[2] as string;
+		const [, k = "", raw = ""] = kv;
+		const key = k.toLowerCase();
 		if (!raw) fail("invalid", `empty value for '${key}'`);
 		if (key === "status" || key === "assignee" || key === "label") {
 			ast.conds.push({ key, value: raw });
@@ -52,7 +54,7 @@ export function parseFilter(q: string): FilterAst {
 					op: o,
 					value: PRIORITIES[name as keyof typeof PRIORITIES],
 				});
-			else if (/^[0-4]$/.test(v))
+			else if (/^\d+$/.test(v) && Number(v) <= PRIORITY_MAX)
 				ast.conds.push({ key, op: o, value: Number(v) });
 			else fail("invalid", `bad priority '${v}'`);
 		} else if (key === "due") {
@@ -63,8 +65,6 @@ export function parseFilter(q: string): FilterAst {
 	}
 	return ast;
 }
-
-const like = (s: string) => `${s.replace(/[\\%_]/g, "\\$&")}`;
 
 function condSql(ctx: Ctx, projectId: string, c: Cond): SQL {
 	const { db } = ctx;
@@ -96,7 +96,7 @@ function condSql(ctx: Ctx, projectId: string, c: Cond): SQL {
 					.from(users)
 					.where(
 						or(
-							sql`lower(${users.email}) LIKE ${`${like(v)}@%`} ESCAPE '\\'`,
+							sql`lower(${users.email}) LIKE ${`${escapeLike(v)}@%`} ESCAPE '\\'`,
 							sql`lower(${users.name}) = ${v}`,
 						),
 					),

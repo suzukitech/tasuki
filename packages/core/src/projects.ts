@@ -45,8 +45,8 @@ export function getProject(
 		.where(eq(projects.key, key.toUpperCase()))
 		.get();
 	if (!project) return fail("not_found", `project ${key} not found`);
-	requireProjectRole(ctx, project.id, min, kind);
-	return project;
+	const role = requireProjectRole(ctx, project.id, min, kind);
+	return { ...project, role };
 }
 
 /** Add or change a member's role (manager only). */

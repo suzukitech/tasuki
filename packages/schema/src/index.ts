@@ -7,6 +7,7 @@ export const PRIORITIES = {
 	high: 3,
 	urgent: 4,
 } as const;
+export const PRIORITY_MAX = Math.max(...Object.values(PRIORITIES));
 
 const md = (max = 4000) => z.string().max(max);
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -27,7 +28,7 @@ const criterion = z.object({ text: z.string().trim().min(1).max(500) });
 /** Fields that can be left out or cleared (null). */
 const clearable = z.object({
 	typeId: z.string().nullish(),
-	priority: z.number().int().min(0).max(4).nullish(),
+	priority: z.number().int().min(0).max(PRIORITY_MAX).nullish(),
 	assigneeId: z.string().nullish(),
 	approverId: z.string().nullish(),
 	parentId: z.string().nullish(),

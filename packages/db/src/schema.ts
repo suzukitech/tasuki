@@ -137,7 +137,7 @@ export const issues = sqliteTable(
 	(t) => [
 		uniqueIndex("issues_project_number_uq").on(t.projectId, t.number),
 		index("issues_project_status_idx").on(t.projectId, t.statusId),
-		index("issues_status_idx").on(t.statusId),
+		index("issues_status_idx").on(t.statusId, t.rank),
 		index("issues_assignee_idx").on(t.assigneeId),
 		index("issues_parent_idx").on(t.parentId),
 		check(

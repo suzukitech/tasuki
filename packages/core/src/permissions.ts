@@ -5,10 +5,10 @@ import { type Ctx, fail } from "./ctx";
 const RANK = { viewer: 0, member: 1, manager: 2 } as const;
 export type Role = keyof typeof RANK;
 
-/** The actor's role in a project. System admins are managers everywhere. */
 const userOf = (ctx: Ctx) =>
 	ctx.db.select().from(users).where(eq(users.id, ctx.actor.userId)).get();
 
+/** The actor's role in a project. System admins are managers everywhere. */
 export function projectRole(ctx: Ctx, projectId: string): Role | null {
 	const user = userOf(ctx);
 	if (!user) return null;

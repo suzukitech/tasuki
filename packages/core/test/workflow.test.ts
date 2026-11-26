@@ -20,6 +20,7 @@ import {
 	updateCriteria,
 	updateIssue,
 } from "../src/index";
+import { TRANSITIONS } from "../src/transitions";
 import { setup } from "./fixture";
 
 const codeOf = (fn: () => unknown) => {
@@ -476,7 +477,7 @@ describe("moveIssue cannot bypass gates", () => {
 		expect(mv(w.human, "in_progress")).toBe("gate");
 		expect(mv(w.tok, "plan_review")).toBe("invalid");
 		expect(mv(w.tok, "impl_review")).toBe("invalid");
-		expect(mv(w.tok, "done")).toBe("gate");
+		expect(mv(w.tok, "done")).toBe("conflict"); // ready -> done has no entry in the ai flow
 		submitPlan(w.tok, w.ref, PLAN);
 		expect(mv(w.tok, "in_progress")).toBe("gate"); // plan_review -> in_progress: use approvePlan
 		expect(mv(w.human, "in_progress")).toBe("gate");
@@ -510,6 +511,7 @@ describe("moveIssue cannot bypass gates", () => {
 	test("skip_plan_review allows the move; reorder in place; bad status; viewer", () => {
 		const w = world();
 		updateIssue(w.human, w.ref, { skipPlanReview: true });
+		w.toReady();
 		moveIssue(w.tok, w.ref, { statusId: w.statusId("in_progress") });
 		expect(w.cat()).toBe("in_progress");
 		moveIssue(w.tok, w.ref, {
@@ -556,5 +558,79 @@ describe("tokens cannot change who/what gates an issue", () => {
 		expect(
 			codeOf(() => updateIssue(ctx(u.mgr), "WEB-1", { approverId: u.mem.id })),
 		).toBeUndefined();
+	});
+});
+
+describe("transition table", () => {
+	const CATS = [
+		"draft",
+		"ready",
+		"plan_review",
+		"in_progress",
+		"impl_review",
+		"done",
+	] as const;
+	const reach = (w: ReturnType<typeof world>, cat: (typeof CATS)[number]) => {
+		if (cat === "ready") w.toReady();
+		if (cat === "plan_review") w.toPlanReview();
+		if (cat === "in_progress") w.toInProgress();
+		if (cat === "impl_review" || cat === "done") w.toImplReview();
+		if (cat === "done") completeIssue(w.human, w.ref);
+	};
+	const allowsMove = (flow: "ai" | "simple", from: string, to: string) =>
+		[
+			(
+				TRANSITIONS[flow] as Record<
+					string,
+					Record<string, { op: string | string[] }>
+				>
+			)[from]?.[to]?.op,
+		]
+			.flat()
+			.includes("move");
+
+	test("ai flow: move succeeds exactly where the table says op 'move'", () => {
+		for (const from of CATS)
+			for (const to of CATS) {
+				if (from === to) continue;
+				const w = world();
+				reach(w, from);
+				expect(w.cat()).toBe(from);
+				const code = codeOf(() =>
+					moveIssue(w.human, w.ref, { statusId: w.statusId(to) }),
+				);
+				if (allowsMove("ai", from, to)) {
+					// ready -> in_progress additionally needs an approved plan or skip
+					if (!(from === "ready" && to === "in_progress"))
+						expect([from, to, code]).toEqual([from, to, undefined]);
+				} else
+					expect([from, to, code === undefined]).toEqual([from, to, false]);
+			}
+	});
+	test("moveIssue cannot complete an ai issue from any state", () => {
+		for (const from of ["ready", "plan_review", "impl_review"] as const) {
+			const w = world();
+			reach(w, from);
+			expect(
+				codeOf(() =>
+					moveIssue(w.human, w.ref, { statusId: w.statusId("done") }),
+				),
+			).toBeDefined();
+			expect(w.cat()).toBe(from);
+		}
+	});
+	test("simple flow: token cannot complete", () => {
+		const w = setup();
+		w.issue({ flow: "simple" });
+		const done = w.db
+			.select()
+			.from(statuses)
+			.all()
+			.find((s) => s.category === "done")?.id as string;
+		const tok = w.ctx(w.u.mem, "token");
+		expect(codeOf(() => completeIssue(tok, "WEB-1"))).toBe("gate");
+		expect(codeOf(() => moveIssue(tok, "WEB-1", { statusId: done }))).toBe(
+			"gate",
+		);
 	});
 });

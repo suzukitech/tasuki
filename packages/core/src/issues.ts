@@ -22,42 +22,30 @@ import {
 	PRIORITIES,
 	updateIssueInput,
 } from "@tasuki/schema";
-import {
-	and,
-	asc,
-	desc,
-	eq,
-	type SQL,
-	type SQLWrapper,
-	sql,
-} from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
-import { atomic, type Ctx, fail, log, nowOf, parse } from "./ctx";
-import {
-	projectRole,
-	type Role,
-	requireProjectRole,
-	requireSession,
-} from "./permissions";
+import { atomic, type Ctx, fail, log, logAll, nowOf, parse } from "./ctx";
+import { type Role, requireProjectRole, requireSession } from "./permissions";
 import { getProject } from "./projects";
 
 export const refOf = (key: string, number: number) => `${key}-${number}`;
 
-const selectIssue = (ctx: Ctx, where: SQL | undefined) =>
-	ctx.db
-		.select({ issue: issues, category: statuses.category })
-		.from(issues)
-		.innerJoin(statuses, eq(statuses.id, issues.statusId))
-		.where(where)
-		.get();
+const issueRow = {
+	issue: issues,
+	category: statuses.category,
+	statusName: statuses.name,
+};
 
-function withProject(
-	ctx: Ctx,
+function loaded(
 	project: typeof projects.$inferSelect,
-	row: { issue: Issue; category: Category },
+	role: Role,
+	row: { issue: Issue; category: Category; statusName: string },
 ) {
-	const role = projectRole(ctx, project.id) as Role;
-	return { ...row, project, role, ref: refOf(project.key, row.issue.number) };
+	return {
+		...row,
+		project: { ...project, role },
+		ref: refOf(project.key, row.issue.number),
+	};
 }
 
 /** Load an issue by "KEY-12" ref and check the actor's role in its project. */
@@ -69,30 +57,35 @@ export function loadIssue(
 ) {
 	const m = /^([A-Za-z]{2,10})-(\d+)$/.exec(ref.trim());
 	if (!m) return fail("invalid", `bad issue ref: ${ref}`);
-	const project = getProject(ctx, m[1] as string, min, kind);
-	const row = selectIssue(
-		ctx,
-		and(eq(issues.projectId, project.id), eq(issues.number, Number(m[2]))),
-	);
+	const { role, ...project } = getProject(ctx, m[1] ?? "", min, kind);
+	const row = ctx.db
+		.select(issueRow)
+		.from(issues)
+		.innerJoin(statuses, eq(statuses.id, issues.statusId))
+		.where(
+			and(eq(issues.projectId, project.id), eq(issues.number, Number(m[2]))),
+		)
+		.get();
 	if (!row) return fail("not_found", `issue ${ref} not found`);
-	return withProject(ctx, project, row);
+	return loaded(project, role, row);
 }
 
 /** Same as loadIssue, by issue id. */
 export function loadIssueById(ctx: Ctx, id: string, min: Role = "viewer") {
-	const row = selectIssue(ctx, eq(issues.id, id));
+	const row = ctx.db
+		.select({ ...issueRow, project: projects })
+		.from(issues)
+		.innerJoin(statuses, eq(statuses.id, issues.statusId))
+		.innerJoin(projects, eq(projects.id, issues.projectId))
+		.where(eq(issues.id, id))
+		.get();
 	if (!row) return fail("not_found", "issue not found");
-	const project = ctx.db
-		.select()
-		.from(projects)
-		.where(eq(projects.id, row.issue.projectId))
-		.get() as typeof projects.$inferSelect;
-	requireProjectRole(ctx, project.id, min);
-	return withProject(ctx, project, row);
+	const role = requireProjectRole(ctx, row.project.id, min);
+	return loaded(row.project, role, row);
 }
 export type Loaded = ReturnType<typeof loadIssue>;
 
-function statusFor(ctx: Ctx, projectId: string, category: Category) {
+export function statusFor(ctx: Ctx, projectId: string, category: Category) {
 	const s = ctx.db
 		.select()
 		.from(statuses)
@@ -104,7 +97,7 @@ function statusFor(ctx: Ctx, projectId: string, category: Category) {
 	return s ?? fail("invalid", `project has no '${category}' status`);
 }
 
-function endRank(ctx: Ctx, statusId: string) {
+export function endRank(ctx: Ctx, statusId: string) {
 	const last = ctx.db
 		.select({ rank: issues.rank })
 		.from(issues)
@@ -127,62 +120,41 @@ export function patchIssue(
 		.get();
 }
 
-/** Move an issue to a status of `category` (or an explicit status), logging the change. */
-export function setCategory(
-	ctx: Ctx,
-	l: Loaded,
-	category: Category,
-	opts: { statusId?: string; rank?: string } = {},
-) {
-	const target = opts.statusId
-		? ctx.db.select().from(statuses).where(eq(statuses.id, opts.statusId)).get()
-		: statusFor(ctx, l.project.id, category);
-	if (!target || target.projectId !== l.project.id)
-		fail("invalid", "unknown status");
-	const prev = ctx.db
-		.select()
-		.from(statuses)
-		.where(eq(statuses.id, l.issue.statusId))
-		.get();
-	const next = target as NonNullable<typeof target>;
-	patchIssue(ctx, l.issue.id, {
-		statusId: next.id,
-		rank: opts.rank ?? endRank(ctx, next.id),
-		closedAt: next.category === "done" ? nowOf(ctx) : null,
-	});
-	if (prev?.id !== next.id)
-		log(ctx, l.issue.id, "updated", "status", prev?.name, next.name);
-}
+type Refs = Partial<
+	Pick<Issue, "assigneeId" | "approverId" | "typeId" | "parentId">
+>;
 
-function checkRefs(ctx: Ctx, projectId: string, p: Partial<Issue>) {
-	const byId = <T extends typeof users | typeof issueTypes | typeof issues>(
-		t: T,
-		id: string,
-	) =>
-		ctx.db
-			.select()
-			.from(t as never)
-			.where(eq(t.id, id))
-			.get() as T["$inferSelect"] | undefined;
-	for (const uid of [p.assigneeId, p.approverId]) {
+/** Validate ref fields that are set and differ from `current` (all of them on create). */
+function checkRefs(ctx: Ctx, projectId: string, p: Refs, current?: Refs) {
+	const changed = (f: keyof Refs) => (p[f] !== current?.[f] ? p[f] : null);
+	for (const uid of [changed("assigneeId"), changed("approverId")]) {
 		if (!uid) continue;
-		const u = byId(users, uid);
-		const m = ctx.db
-			.select()
-			.from(projectMembers)
-			.where(
-				and(
+		const u = ctx.db.query.users.findFirst({ where: eq(users.id, uid) }).sync();
+		const m = ctx.db.query.projectMembers
+			.findFirst({
+				where: and(
 					eq(projectMembers.projectId, projectId),
 					eq(projectMembers.userId, uid),
 				),
-			)
-			.get();
+			})
+			.sync();
 		if (!u || (!m && u.role !== "admin"))
 			fail("invalid", "assignee/approver must be a project member");
 	}
-	if (p.typeId && byId(issueTypes, p.typeId)?.projectId !== projectId)
+	const typeId = changed("typeId");
+	if (
+		typeId &&
+		ctx.db.query.issueTypes
+			.findFirst({ where: eq(issueTypes.id, typeId) })
+			.sync()?.projectId !== projectId
+	)
 		fail("invalid", "unknown issue type");
-	if (p.parentId && byId(issues, p.parentId)?.projectId !== projectId)
+	const parentId = changed("parentId");
+	if (
+		parentId &&
+		ctx.db.query.issues.findFirst({ where: eq(issues.id, parentId) }).sync()
+			?.projectId !== projectId
+	)
 		fail("invalid", "unknown parent issue");
 }
 
@@ -197,29 +169,49 @@ function labelNames(ctx: Ctx, issueId: string) {
 		.sort();
 }
 
+/** Replace the issue's labels (creating missing ones). Returns false if nothing changed. */
 function setLabels(
 	ctx: Ctx,
 	projectId: string,
 	issueId: string,
 	names: string[],
 ) {
+	const want = [...new Map(names.map((n) => [n.toLowerCase(), n])).values()];
+	const existing = want.length
+		? ctx.db
+				.select()
+				.from(labels)
+				.where(
+					and(
+						eq(labels.projectId, projectId),
+						inArray(
+							sql`lower(${labels.name})`,
+							want.map((n) => n.toLowerCase()),
+						),
+					),
+				)
+				.all()
+		: [];
+	const byName = new Map(existing.map((l) => [l.name.toLowerCase(), l.id]));
+	const ids = want.map(
+		(name) =>
+			byName.get(name.toLowerCase()) ??
+			ctx.db.insert(labels).values({ projectId, name }).returning().get().id,
+	);
+	const cur = ctx.db
+		.select({ id: issueLabels.labelId })
+		.from(issueLabels)
+		.where(eq(issueLabels.issueId, issueId))
+		.all();
+	if (cur.length === ids.length && cur.every((r) => ids.includes(r.id)))
+		return false;
 	ctx.db.delete(issueLabels).where(eq(issueLabels.issueId, issueId)).run();
-	for (const name of new Map(names.map((n) => [n.toLowerCase(), n])).values()) {
-		const existing = ctx.db
-			.select()
-			.from(labels)
-			.where(
-				and(
-					eq(labels.projectId, projectId),
-					sql`lower(${labels.name}) = ${name.toLowerCase()}`,
-				),
-			)
-			.get();
-		const label =
-			existing ??
-			ctx.db.insert(labels).values({ projectId, name }).returning().get();
-		ctx.db.insert(issueLabels).values({ issueId, labelId: label.id }).run();
-	}
+	if (ids.length)
+		ctx.db
+			.insert(issueLabels)
+			.values(ids.map((labelId) => ({ issueId, labelId })))
+			.run();
+	return true;
 }
 
 export function createIssue(ctx: Ctx, projectKey: string, input: unknown) {
@@ -231,13 +223,14 @@ export function createIssue(ctx: Ctx, projectKey: string, input: unknown) {
 			skipPlanReview: false,
 			approverId: c.actor.userId,
 		});
-		checkRefs(c, project.id, inp as Partial<Issue>);
-		const { n } = c.db
+		checkRefs(c, project.id, inp);
+		const n = c.db
 			.update(projects)
 			.set({ nextNumber: sql`${projects.nextNumber} + 1` })
 			.where(eq(projects.id, project.id))
 			.returning({ n: projects.nextNumber })
-			.get() as { n: number };
+			.get()?.n;
+		if (!n) return fail("not_found", "project not found");
 		const status = statusFor(
 			c,
 			project.id,
@@ -271,33 +264,46 @@ export function createIssue(ctx: Ctx, projectKey: string, input: unknown) {
 export function getIssue(ctx: Ctx, ref: string) {
 	const l = loadIssue(ctx, ref);
 	const id = l.issue.id;
-	const rows = <
-		T extends
-			| typeof acceptanceCriteria
-			| typeof plans
-			| typeof reports
-			| typeof questions
-			| typeof comments
-			| typeof activities,
-	>(
-		t: T,
-		order: SQLWrapper,
-	) =>
-		ctx.db
-			.select()
-			.from(t as never)
-			.where(eq(t.issueId, id))
-			.orderBy(asc(order))
-			.all() as T["$inferSelect"][];
+	const q = ctx.db.query;
 	return {
 		...l,
 		labels: labelNames(ctx, id),
-		criteria: rows(acceptanceCriteria, acceptanceCriteria.position),
-		plans: rows(plans, plans.version),
-		reports: rows(reports, reports.createdAt),
-		questions: rows(questions, questions.createdAt),
-		comments: rows(comments, comments.createdAt),
-		activities: rows(activities, activities.createdAt),
+		criteria: q.acceptanceCriteria
+			.findMany({
+				where: eq(acceptanceCriteria.issueId, id),
+				orderBy: asc(acceptanceCriteria.position),
+			})
+			.sync(),
+		plans: q.plans
+			.findMany({
+				where: eq(plans.issueId, id),
+				orderBy: asc(plans.version),
+			})
+			.sync(),
+		reports: q.reports
+			.findMany({
+				where: eq(reports.issueId, id),
+				orderBy: asc(reports.createdAt),
+			})
+			.sync(),
+		questions: q.questions
+			.findMany({
+				where: eq(questions.issueId, id),
+				orderBy: asc(questions.createdAt),
+			})
+			.sync(),
+		comments: q.comments
+			.findMany({
+				where: eq(comments.issueId, id),
+				orderBy: asc(comments.createdAt),
+			})
+			.sync(),
+		activities: q.activities
+			.findMany({
+				where: eq(activities.issueId, id),
+				orderBy: asc(activities.createdAt),
+			})
+			.sync(),
 	};
 }
 
@@ -332,25 +338,30 @@ export function updateIssue(
 		)
 			fail("conflict", "issue was changed by someone else");
 		guardGateFields(c, inp, issue);
-		checkRefs(c, project.id, inp as Partial<Issue>);
+		checkRefs(c, project.id, inp, issue);
 		const set: Record<string, unknown> = {};
+		const acts: Parameters<typeof logAll>[2] = [];
 		for (const [f, v] of Object.entries(inp)) {
 			if (f === "labels" || v === undefined) continue;
 			const cur = issue[f as keyof Issue];
 			if (v !== cur) {
 				set[f] = v;
-				log(c, issue.id, "updated", f, cur, v);
+				acts.push({ action: "updated", field: f, before: cur, after: v });
 			}
 		}
 		if (inp.labels) {
 			const before = labelNames(c, issue.id);
-			setLabels(c, project.id, issue.id, inp.labels);
-			const after = labelNames(c, issue.id);
-			if (before.join() !== after.join()) {
-				log(c, issue.id, "updated", "labels", before, after);
+			if (setLabels(c, project.id, issue.id, inp.labels)) {
+				acts.push({
+					action: "updated",
+					field: "labels",
+					before,
+					after: labelNames(c, issue.id),
+				});
 				set.updatedAt = nowOf(c);
 			}
 		}
+		logAll(c, issue.id, acts);
 		return Object.keys(set).length ? patchIssue(c, issue.id, set) : issue;
 	});
 }
