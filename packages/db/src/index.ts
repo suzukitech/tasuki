@@ -26,33 +26,18 @@ export function searchIssueIds(
 	term: string,
 ): string[] {
 	const { issues } = schema;
-	if ([...term].length >= 3) {
-		const phrase = `"${term.replaceAll('"', '""')}"`;
-		return db
-			.select({ id: issues.id })
-			.from(issues)
-			.where(
-				and(
-					eq(issues.projectId, projectId),
-					sql`${issues}.rowid IN (SELECT rowid FROM issues_fts WHERE issues_fts MATCH ${phrase})`,
-				),
-			)
-			.all()
-			.map((r) => r.id);
-	}
-	const pattern = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+	const like = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
+	const match =
+		[...term].length >= 3
+			? sql`${issues}.rowid IN (SELECT rowid FROM issues_fts WHERE issues_fts MATCH ${`"${term.replaceAll('"', '""')}"`})`
+			: or(
+					sql`${issues.title} LIKE ${like} ESCAPE '\\'`,
+					sql`${issues.bodyMd} LIKE ${like} ESCAPE '\\'`,
+				);
 	return db
 		.select({ id: issues.id })
 		.from(issues)
-		.where(
-			and(
-				eq(issues.projectId, projectId),
-				or(
-					sql`${issues.title} LIKE ${pattern} ESCAPE '\\'`,
-					sql`${issues.bodyMd} LIKE ${pattern} ESCAPE '\\'`,
-				),
-			),
-		)
+		.where(and(eq(issues.projectId, projectId), match))
 		.all()
 		.map((r) => r.id);
 }
