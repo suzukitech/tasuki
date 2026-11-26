@@ -9,8 +9,21 @@ import {
 	users,
 } from "@tasuki/db";
 import { DATE_RE, PRIORITIES, PRIORITY_MAX } from "@tasuki/schema";
-import { and, eq, inArray, isNull, ne, or, type SQL, sql } from "drizzle-orm";
+import {
+	and,
+	desc,
+	eq,
+	getTableColumns,
+	inArray,
+	isNull,
+	lt,
+	ne,
+	or,
+	type SQL,
+	sql,
+} from "drizzle-orm";
 import { type Ctx, fail } from "./ctx";
+import { refOf } from "./issues";
 import { getProject } from "./projects";
 
 const OPS = [">=", "<=", ">", "<", "="] as const;
@@ -135,18 +148,55 @@ function buildIssueWhere(ctx: Ctx, projectId: string, ast: FilterAst) {
 	) as SQL;
 }
 
-export function searchIssues(
+/** List columns only: no body_md (the detail view loads that). */
+const { bodyMd: _body, ...LIST_COLUMNS } = getTableColumns(issues);
+
+/** The one list query: filter + optional cursor, in number order. Rows carry their `ref`. */
+function listIssues(
+	ctx: Ctx,
+	projectKey: string,
+	q: string,
+	opts: { limit: number; newestFirst?: boolean; cursor?: number },
+) {
+	const project = getProject(ctx, projectKey);
+	return ctx.db
+		.select(LIST_COLUMNS)
+		.from(issues)
+		.where(
+			and(
+				buildIssueWhere(ctx, project.id, parseFilter(q)),
+				opts.cursor === undefined ? undefined : lt(issues.number, opts.cursor),
+			),
+		)
+		.orderBy(opts.newestFirst ? desc(issues.number) : issues.number)
+		.limit(opts.limit)
+		.all()
+		.map((i) => ({ ...i, ref: refOf(project.key, i.number) }));
+}
+
+export const searchIssues = (
 	ctx: Ctx,
 	projectKey: string,
 	q: string,
 	limit = 200,
+) => listIssues(ctx, projectKey, q, { limit });
+
+/** Newest first. `cursor` = the last issue number of the previous page. */
+export function pageIssues(
+	ctx: Ctx,
+	projectKey: string,
+	q: string,
+	opts: { cursor?: number; limit?: number } = {},
 ) {
-	const project = getProject(ctx, projectKey);
-	return ctx.db
-		.select()
-		.from(issues)
-		.where(buildIssueWhere(ctx, project.id, parseFilter(q)))
-		.orderBy(issues.number)
-		.limit(limit)
-		.all();
+	const limit = Math.min(Math.max(opts.limit ?? 50, 1), 200);
+	const rows = listIssues(ctx, projectKey, q, {
+		limit: limit + 1,
+		newestFirst: true,
+		cursor: opts.cursor,
+	});
+	const items = rows.slice(0, limit);
+	return {
+		items,
+		nextCursor: rows.length > limit ? (items.at(-1)?.number ?? null) : null,
+	};
 }

@@ -19,6 +19,10 @@ export const createProjectInput = z.object({
 	description: md().default(""),
 });
 
+export const updateProjectInput = z
+	.object({ name: createProjectInput.shape.name, description: md() })
+	.partial();
+
 const title = z.string().trim().min(1).max(200);
 const bodyMd = md(50000);
 const flow = z.enum(["ai", "simple"]);
@@ -100,11 +104,43 @@ export const tokenInput = z.object({
 	name: z.string().trim().min(1).max(100),
 	scopes: z.array(z.enum(["read", "write"])).min(1),
 	projectIds: z.array(z.string()).nullable().default(null),
-	expiresAt: z.date().nullish(),
+	expiresAt: z.iso
+		.datetime({ offset: true })
+		.transform((s) => new Date(s))
+		.refine((d) => d.getTime() > Date.now(), "must be in the future")
+		.nullish(),
 });
 
 export const registerInput = z.object({
 	email: z.string().trim().toLowerCase().pipe(z.email()),
 	name: z.string().trim().min(1).max(100),
 	password: z.string().min(8).max(200),
+});
+
+export const bulkInput = updateIssueInput
+	.pick({ assigneeId: true, labels: true })
+	.extend({
+		refs: z.array(z.string()).min(1).max(100),
+		statusId: z.string().optional(),
+	});
+
+// --- small REST request bodies ---
+export const loginInput = z.object({ email: z.string(), password: z.string() });
+export const inviteAcceptInput = registerInput.extend({ token: z.string() });
+export const noteBody = z.object({ note: z.string() });
+export const optNoteBody = noteBody.partial();
+export const moveInput = z.object({
+	statusId: z.string(),
+	rank: z.string().optional(),
+});
+export const completeInput = moveInput.partial();
+export const answerInput = z.object({ answerMd: z.string() });
+export const commentInput = z.object({ bodyMd: z.string() });
+export const listQuery = z.object({
+	q: z.string().default(""),
+	cursor: z.preprocess(
+		(v) => (v === "" ? undefined : v),
+		z.coerce.number().int().min(1).optional(),
+	),
+	limit: z.coerce.number().int().min(1).max(200).optional(),
 });

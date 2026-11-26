@@ -12,7 +12,16 @@ export type Actor = {
 		projectIds: string[] | null;
 	};
 };
-export type Ctx = { db: Conn; actor: Actor; now?: () => Date };
+export type IssueEvent = { type: string; projectId: string; ref: string };
+export type Ctx = {
+	db: Conn;
+	actor: Actor;
+	now?: () => Date;
+	/** Called once per recorded event, only after the outermost transaction commits. */
+	emit?: (e: IssueEvent) => void;
+	/** Events recorded inside the running `atomic` (internal). */
+	pending?: IssueEvent[];
+};
 
 const STATUS = {
 	not_found: 404,
@@ -20,6 +29,11 @@ const STATUS = {
 	conflict: 409,
 	invalid: 400,
 	gate: 409,
+	precondition: 412,
+	unauthorized: 401,
+	csrf: 403,
+	unsupported_media: 415,
+	rate_limited: 429,
 } as const;
 
 export class TasukiError extends Error {
@@ -39,10 +53,20 @@ export const fail = (code: keyof typeof STATUS, message: string): never => {
 export const nowOf = (ctx: { now?: () => Date }) =>
 	(ctx.now ?? (() => new Date()))();
 
-/** Run `fn` in a transaction. Nested calls become savepoints. */
+/**
+ * Run `fn` in a transaction. Nested calls become savepoints.
+ * Events recorded with `record` fire via `ctx.emit` after the outermost commit, never on rollback.
+ */
 export function atomic<T>(ctx: Ctx, fn: (c: Ctx) => T): T {
-	return ctx.db.transaction((tx) => fn({ ...ctx, db: tx }));
+	const pending = ctx.pending ?? [];
+	const out = ctx.db.transaction((tx) => fn({ ...ctx, db: tx, pending }));
+	if (!ctx.pending) for (const e of pending) ctx.emit?.(e);
+	return out;
 }
+
+/** Queue an issue event (call inside `atomic`). */
+export const record = (c: Ctx, type: string, projectId: string, ref: string) =>
+	void c.pending?.push({ type, projectId, ref });
 
 export function parse<T extends z.ZodType>(
 	schema: T,

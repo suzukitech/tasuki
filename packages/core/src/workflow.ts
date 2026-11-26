@@ -9,6 +9,7 @@ import {
 	statuses,
 } from "@tasuki/db";
 import {
+	bulkInput,
 	criteriaInput,
 	evidenceInput,
 	noteInput,
@@ -26,18 +27,21 @@ import {
 	lte,
 	type SQL,
 } from "drizzle-orm";
-import { atomic, type Ctx, fail, log, nowOf, parse } from "./ctx";
+import { atomic, type Ctx, fail, log, nowOf, parse, record } from "./ctx";
 import {
 	insertComment,
 	type Loaded,
 	loadIssue,
 	loadIssueById,
 	patchIssue,
+	updateIssue,
 } from "./issues";
 import { requireSession } from "./permissions";
 import { requireApprovedPlan, transition } from "./transitions";
 
 const LOCK_MS = 30 * 60 * 1000;
+const announce = (c: Ctx, l: Loaded, type: string) =>
+	record(c, type, l.project.id, l.ref);
 const reviewUrl = (ref: string, tab: string) => `/issues/${ref}?tab=${tab}`;
 
 const hasOpenQuestion = (c: Ctx, issueId: string) =>
@@ -171,6 +175,7 @@ export function submitPlan(ctx: Ctx, ref: string, input: unknown) {
 				.run();
 		transition(c, l, "plan_review", "submitPlan");
 		log(c, l.issue.id, "plan_submitted", "plan", null, `v${plan.version}`);
+		announce(c, l, "plan.submitted");
 		return { plan, reviewUrl: reviewUrl(l.ref, "plan") };
 	});
 }
@@ -203,6 +208,7 @@ function reviewPlan(ctx: Ctx, ref: string, approve: boolean, note?: string) {
 			`v${plan.version}`,
 			note,
 		);
+		announce(c, l, approve ? "plan.approved" : "plan.rejected");
 		return {
 			...plan,
 			state: approve ? ("approved" as const) : ("rejected" as const),
@@ -264,6 +270,7 @@ export function startImplementation(ctx: Ctx, ref: string) {
 					})
 					.returning()
 					.get();
+		announce(c, l, "issue.started");
 		const s = slug(l.issue.title);
 		return { session, branch: s ? `${l.ref}-${s}` : l.ref };
 	});
@@ -312,6 +319,7 @@ export function askQuestion(ctx: Ctx, ref: string, bodyMd: string) {
 			.returning()
 			.get();
 		log(c, l.issue.id, "question_asked");
+		announce(c, l, "question.asked");
 		return q;
 	});
 }
@@ -327,7 +335,7 @@ export function answerQuestion(ctx: Ctx, questionId: string, answerMd: string) {
 			.where(eq(questions.id, questionId))
 			.get();
 		if (!q) return fail("not_found", "question not found");
-		loadIssueById(c, q.issueId, "member");
+		const l = loadIssueById(c, q.issueId, "member");
 		if (q.state !== "open") fail("conflict", "already answered");
 		const done = c.db
 			.update(questions)
@@ -336,6 +344,7 @@ export function answerQuestion(ctx: Ctx, questionId: string, answerMd: string) {
 			.returning()
 			.get();
 		log(c, q.issueId, "question_answered");
+		announce(c, l, "question.answered");
 		return done;
 	});
 }
@@ -390,6 +399,7 @@ export function updateCriteria(ctx: Ctx, ref: string, criteria: unknown) {
 			}
 		});
 		if (!changed) return criteriaOf(c, l.issue.id);
+		announce(c, l, "criteria.updated");
 		log(
 			c,
 			l.issue.id,
@@ -478,6 +488,7 @@ export function recordEvidence(
 			crit.result,
 			inp.result,
 		);
+		announce(c, l, "evidence.recorded");
 		return row;
 	});
 }
@@ -503,6 +514,7 @@ export function submitReport(ctx: Ctx, ref: string, input: unknown) {
 		endSessions(c, l.issue.id, "reported");
 		transition(c, l, "impl_review", "submitReport");
 		log(c, l.issue.id, "report_submitted");
+		announce(c, l, "report.submitted");
 		return { report, reviewUrl: reviewUrl(l.ref, "report") };
 	});
 }
@@ -541,6 +553,7 @@ export function completeIssue(
 		const l = loadIssue(c, ref, "member");
 		const target = opts.statusId ? statusIn(c, l, opts.statusId) : undefined;
 		complete(c, l, "complete", { target, rank: opts.rank });
+		announce(c, l, "issue.completed");
 	});
 }
 
@@ -559,6 +572,7 @@ export function returnReport(ctx: Ctx, ref: string, note: string) {
 			.run();
 		insertComment(c, l.issue.id, text);
 		log(c, l.issue.id, "report_returned", undefined, undefined, text);
+		announce(c, l, "report.returned");
 	});
 }
 
@@ -581,6 +595,7 @@ export function moveIssue(
 		const l = loadIssue(c, ref, "member");
 		const target = statusIn(c, l, input.statusId);
 		const opts = { target, rank: input.rank };
+		announce(c, l, "issue.moved");
 		if (target.category === "done" && l.category !== "done")
 			return complete(c, l, "move", opts);
 		transition(c, l, target.category, "move", opts);
@@ -612,4 +627,27 @@ export function whoseTurn(
 		default:
 			return null;
 	}
+}
+
+/** assignee / status / labels for many issues, all or nothing. One `issue.updated` per issue. */
+export function bulkUpdate(ctx: Ctx, input: unknown) {
+	const { refs, statusId, ...fields } = parse(bulkInput, input);
+	return atomic(ctx, (c) => {
+		const edit = Object.fromEntries(
+			Object.entries(fields).filter(([, v]) => v !== undefined),
+		);
+		for (const ref of refs) loadIssue(c, ref, "member"); // authorize all first
+		if (!Object.keys(edit).length && !statusId)
+			fail("invalid", "nothing to update");
+		const inner: Ctx = { ...c, pending: [] }; // swallow the per-op events
+		for (const ref of refs) {
+			if (Object.keys(edit).length) updateIssue(inner, ref, edit);
+			if (statusId) moveIssue(inner, ref, { statusId });
+		}
+		for (const e of new Map(
+			(inner.pending ?? []).map((e) => [e.ref, e]),
+		).values())
+			record(c, "issue.updated", e.projectId, e.ref);
+		return refs;
+	});
 }

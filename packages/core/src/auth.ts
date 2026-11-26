@@ -1,4 +1,11 @@
-import { apiTokens, type Db, invites, sessions, users } from "@tasuki/db";
+import {
+	apiTokens,
+	type Conn,
+	type Db,
+	invites,
+	sessions,
+	users,
+} from "@tasuki/db";
 import { registerInput, tokenInput } from "@tasuki/schema";
 import { and, count, eq, isNull } from "drizzle-orm";
 import { type Actor, type Ctx, fail, nowOf, parse } from "./ctx";
@@ -11,7 +18,7 @@ export const hashPassword = (pw: string) =>
 export const verifyPassword = (pw: string, hash: string) =>
 	Bun.password.verify(pw, hash);
 
-const sha256 = (s: string) =>
+export const sha256 = (s: string) =>
 	new Bun.CryptoHasher("sha256").update(s).digest("hex");
 const randomToken = (prefix = "") =>
 	prefix +
@@ -100,7 +107,7 @@ export function resolveSession(
 	return { userId: s.userId, via: "web", auth: "session" };
 }
 
-/** Email + password → session token, or null. */
+/** Email + password → `{ session, user }` (session = the plaintext cookie value), or null. */
 export async function login(
 	db: Db,
 	email: string,
@@ -113,7 +120,7 @@ export async function login(
 		.where(eq(users.email, email.trim().toLowerCase()))
 		.get();
 	if (!u || !(await verifyPassword(password, u.passwordHash))) return null;
-	return createSession(db, u.id, clock);
+	return { session: createSession(db, u.id, clock), user: meOf(u) };
 }
 
 /** Admin issues a 7-day invite link token (plaintext returned once). */
@@ -179,4 +186,93 @@ export async function setupFirstAdmin(db: Db, input: unknown) {
 			return fail("conflict", "setup already done");
 		return insertUser(tx, inp, passwordHash, { role: "admin" });
 	});
+}
+
+export const needsSetup = (db: Db) =>
+	(db.select({ n: count() }).from(users).get()?.n ?? 0) === 0;
+
+const meOf = (u: typeof users.$inferSelect) => ({
+	id: u.id,
+	email: u.email,
+	name: u.name,
+	role: u.role,
+	locale: u.locale,
+});
+
+/** The signed-in user (never includes the password hash). */
+export function getMe(ctx: Ctx) {
+	const u = ctx.db
+		.select()
+		.from(users)
+		.where(eq(users.id, ctx.actor.userId))
+		.get();
+	if (!u) return fail("not_found", "user not found");
+	return meOf(u);
+}
+
+export function destroySession(db: Db, plaintext: string) {
+	db.delete(sessions)
+		.where(eq(sessions.tokenHash, sha256(plaintext)))
+		.run();
+}
+
+/** The caller's tokens (metadata only: the plaintext is unrecoverable). */
+export function listApiTokens(ctx: Ctx) {
+	requireSession(ctx, "listing access tokens");
+	return ctx.db
+		.select({
+			id: apiTokens.id,
+			name: apiTokens.name,
+			scopes: apiTokens.scopes,
+			projectIds: apiTokens.projectIds,
+			lastUsedAt: apiTokens.lastUsedAt,
+			expiresAt: apiTokens.expiresAt,
+			revokedAt: apiTokens.revokedAt,
+			createdAt: apiTokens.createdAt,
+		})
+		.from(apiTokens)
+		.where(eq(apiTokens.userId, ctx.actor.userId))
+		.all();
+}
+
+/** Revokes one of the caller's tokens; returns its hash (to close that token's live streams). */
+export function revokeApiToken(ctx: Ctx, id: string) {
+	requireSession(ctx, "revoking an access token");
+	const r = ctx.db
+		.update(apiTokens)
+		.set({ revokedAt: nowOf(ctx) })
+		.where(
+			and(
+				eq(apiTokens.id, id),
+				eq(apiTokens.userId, ctx.actor.userId),
+				isNull(apiTokens.revokedAt),
+			),
+		)
+		.returning({ hash: apiTokens.tokenHash })
+		.get();
+	return r?.hash ?? fail("not_found", "token not found");
+}
+
+/** Is the session / token with this sha256 still usable (exists, not revoked, not expired)? */
+export function credentialAlive(
+	db: Conn,
+	kind: "session" | "token",
+	hash: string,
+	clock: Pick<Ctx, "now"> = {},
+) {
+	const now = nowOf(clock);
+	if (kind === "session") {
+		const s = db
+			.select()
+			.from(sessions)
+			.where(eq(sessions.tokenHash, hash))
+			.get();
+		return !!s && s.expiresAt > now;
+	}
+	const t = db
+		.select()
+		.from(apiTokens)
+		.where(eq(apiTokens.tokenHash, hash))
+		.get();
+	return !!t && !t.revokedAt && !(t.expiresAt && t.expiresAt <= now);
 }

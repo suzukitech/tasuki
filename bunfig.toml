@@ -1,4 +1,7 @@
 [test]
 coverageThreshold = { lines = 0.8, functions = 0.8 }
 coverageSkipTestFiles = true
-coveragePathIgnorePatterns = ["packages/db/src/schema.ts"]  # declarations only; drizzle-kit callbacks never run in tests
+coveragePathIgnorePatterns = [
+  "packages/db/src/schema.ts", # declarations only; drizzle-kit callbacks never run in tests
+  "**/test/**",                # shared test helpers (fixture.ts, harness.ts) are not product code
+]

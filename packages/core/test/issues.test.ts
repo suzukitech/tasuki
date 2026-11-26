@@ -137,7 +137,7 @@ describe("updateIssue", () => {
 					{ ifMatch: i.updatedAt.getTime() },
 				),
 			),
-		).toBe("conflict");
+		).toBe("precondition");
 		clock.t = new Date(clock.t.getTime() + 1000);
 		expect(
 			updateIssue(

@@ -7,6 +7,7 @@
 		"packages/*"
 	],
 	"scripts": {
+		"dev": "bun --watch apps/server/src/index.ts",
 		"lint": "biome ci .",
 		"format": "biome check --write .",
 		"typecheck": "tsc --noEmit -p .",

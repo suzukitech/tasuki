@@ -1,11 +1,14 @@
 import {
 	createDefaultIssueTypes,
 	createDefaultStatuses,
+	issueTypes,
 	projectMembers,
 	projects,
+	statuses,
+	users,
 } from "@tasuki/db";
-import { createProjectInput } from "@tasuki/schema";
-import { eq } from "drizzle-orm";
+import { createProjectInput, updateProjectInput } from "@tasuki/schema";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { atomic, type Ctx, fail, parse } from "./ctx";
 import { type Role, requireProjectRole, requireScope } from "./permissions";
 
@@ -65,4 +68,58 @@ export function setMember(
 			set: { role },
 		})
 		.run();
+}
+
+/** Projects the actor can read (token project restriction applies). One query. */
+export function listProjects(ctx: Ctx) {
+	requireScope(ctx, "read");
+	const only = ctx.actor.token?.projectIds;
+	// system admins are managers everywhere; others need a membership row
+	const role = sql<Role | null>`case when ${users.role} = 'admin' then 'manager' else ${projectMembers.role} end`;
+	return ctx.db
+		.select({ project: projects, role })
+		.from(users)
+		.innerJoin(projects, only ? inArray(projects.id, only) : sql`true`)
+		.leftJoin(
+			projectMembers,
+			and(
+				eq(projectMembers.projectId, projects.id),
+				eq(projectMembers.userId, users.id),
+			),
+		)
+		.where(and(eq(users.id, ctx.actor.userId), sql`${role} is not null`))
+		.all()
+		.map((r) => ({ ...r.project, role: r.role as Role }));
+}
+
+export function updateProject(ctx: Ctx, key: string, patch: unknown) {
+	const inp = parse(updateProjectInput, patch);
+	const p = getProject(ctx, key, "manager");
+	return Object.keys(inp).length
+		? ctx.db
+				.update(projects)
+				.set(inp)
+				.where(eq(projects.id, p.id))
+				.returning()
+				.get()
+		: p;
+}
+
+/** Project plus the statuses and issue types a UI needs to render and move issues. */
+export function projectDetail(ctx: Ctx, key: string) {
+	const p = getProject(ctx, key);
+	return {
+		...p,
+		statuses: ctx.db
+			.select()
+			.from(statuses)
+			.where(eq(statuses.projectId, p.id))
+			.orderBy(asc(statuses.position))
+			.all(),
+		issueTypes: ctx.db
+			.select()
+			.from(issueTypes)
+			.where(eq(issueTypes.projectId, p.id))
+			.all(),
+	};
 }
