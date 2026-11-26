@@ -1,3 +1,4 @@
+import { resolve, sep } from "node:path";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
 	type Actor,
@@ -165,9 +166,23 @@ const jsonOrEmpty = async (c: C): Promise<unknown> => {
 	}
 };
 
+const safeDecode = (p: string) => {
+	try {
+		return decodeURIComponent(p);
+	} catch {
+		return "/";
+	}
+};
+
 export function createApp(
 	db: Db,
-	opts: { baseUrl: string; rateLimit?: number; trustProxy?: boolean },
+	opts: {
+		baseUrl: string;
+		rateLimit?: number;
+		trustProxy?: boolean;
+		/** Built SPA (apps/web/dist). Absent or missing on disk: nothing is served. */
+		webDir?: string;
+	},
 ) {
 	const baseUrl = opts.baseUrl.replace(/\/$/, "");
 	const secure = baseUrl.startsWith("https:");
@@ -524,5 +539,31 @@ export function createApp(
 	});
 
 	app.route("/api/v1", api);
+
+	// --- SPA: static files, and index.html for every other non-API GET (client-side routes) ---
+	const webDir = opts.webDir && resolve(opts.webDir);
+	if (webDir)
+		app.get("*", async (c) => {
+			const p = c.req.path;
+			if (p === "/api" || p.startsWith("/api/") || p.startsWith("/mcp"))
+				return c.notFound();
+			const file = resolve(webDir, `.${safeDecode(p)}`);
+			const hit = file.startsWith(webDir + sep) && Bun.file(file);
+			if (hit && (await hit.exists()))
+				return new Response(hit, {
+					headers: p.startsWith("/assets/")
+						? { "cache-control": "public, max-age=31536000, immutable" }
+						: {},
+				});
+			const index = Bun.file(resolve(webDir, "index.html"));
+			return (await index.exists())
+				? new Response(index, {
+						headers: {
+							"content-type": "text/html; charset=utf-8",
+							"cache-control": "no-cache",
+						},
+					})
+				: c.notFound();
+		});
 	return app;
 }

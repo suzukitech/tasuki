@@ -778,31 +778,6 @@ export function moveIssue(
 	});
 }
 
-/** Whose move is it? null when nobody's (done). */
-export function whoseTurn(
-	issue: {
-		category: Category;
-		reporterId: string | null;
-		assigneeId: string | null;
-		approverId: string | null;
-	},
-	userId: string,
-): "you" | "ai" | "others" | null {
-	const who = (id: string | null) => (id === userId ? "you" : "others");
-	switch (issue.category) {
-		case "draft":
-			return who(issue.reporterId);
-		case "ready":
-		case "in_progress":
-			return issue.assigneeId ? "ai" : who(issue.reporterId);
-		case "plan_review":
-		case "impl_review":
-			return who(issue.approverId ?? issue.reporterId);
-		default:
-			return null;
-	}
-}
-
 /** assignee / status / labels for many issues, all or nothing. One `issue.updated` per issue. */
 export function bulkUpdate(ctx: Ctx, input: unknown) {
 	const { refs, statusId, ...fields } = parse(bulkInput, input);

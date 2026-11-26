@@ -116,6 +116,13 @@ export function projectDetail(ctx: Ctx, key: string) {
 			.where(eq(statuses.projectId, p.id))
 			.orderBy(asc(statuses.position))
 			.all(),
+		// people the UI can offer as assignee / approver
+		members: ctx.db
+			.select({ id: users.id, name: users.name, role: projectMembers.role })
+			.from(projectMembers)
+			.innerJoin(users, eq(users.id, projectMembers.userId))
+			.where(eq(projectMembers.projectId, p.id))
+			.all(),
 		issueTypes: ctx.db
 			.select()
 			.from(issueTypes)

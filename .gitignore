@@ -6,3 +6,4 @@ dist/
 tasuki-data/
 .DS_Store
 .serena/
+.ui-review/

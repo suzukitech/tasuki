@@ -7,10 +7,11 @@
 		"packages/*"
 	],
 	"scripts": {
-		"dev": "bun --watch apps/server/src/index.ts",
+		"dev": "bun scripts/dev.ts",
+		"build": "bun --filter @tasuki/web build",
 		"lint": "biome ci .",
 		"format": "biome check --write .",
-		"typecheck": "tsc --noEmit -p .",
+		"typecheck": "tsc --noEmit -p . && tsc --noEmit -p apps/web",
 		"test": "bun test",
 		"check": "bun run lint && bun run typecheck && bun test --coverage"
 	},

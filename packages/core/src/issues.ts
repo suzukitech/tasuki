@@ -8,6 +8,7 @@ import {
 	issues,
 	issueTypes,
 	labels,
+	planCriteria,
 	plans,
 	projectMembers,
 	projects,
@@ -16,12 +17,7 @@ import {
 	statuses,
 	users,
 } from "@tasuki/db";
-import {
-	createIssueInput,
-	noteInput,
-	PRIORITIES,
-	updateIssueInput,
-} from "@tasuki/schema";
+import { createIssueInput, noteInput, updateIssueInput } from "@tasuki/schema";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { generateKeyBetween } from "fractional-indexing";
 import {
@@ -320,6 +316,17 @@ export function getIssue(ctx: Ctx, ref: string) {
 				orderBy: asc(plans.version),
 			})
 			.sync(),
+		// criterion -> step it is mapped to (the plan screen flags criteria with none)
+		planCriteria: ctx.db
+			.select({
+				planId: planCriteria.planId,
+				criterionId: planCriteria.criterionId,
+				stepRef: planCriteria.stepRef,
+			})
+			.from(planCriteria)
+			.innerJoin(plans, eq(plans.id, planCriteria.planId))
+			.where(eq(plans.issueId, id))
+			.all(),
 		reports: q.reports
 			.findMany({
 				where: eq(reports.issueId, id),
@@ -442,32 +449,6 @@ export function addComment(ctx: Ctx, ref: string, bodyMd: string) {
 		record(c, "issue.commented", project.id, r);
 		return row;
 	});
-}
-
-/** "fix login @taro #bug !high" → title + assignee/labels/priority. Accepts full-width ＠＃！. */
-export function parseQuickTitle(text: string) {
-	const out: {
-		title: string;
-		assignee?: string;
-		labels: string[];
-		priority?: number;
-	} = {
-		title: "",
-		labels: [],
-	};
-	const words: string[] = [];
-	for (const w of text.trim().split(/\s+/)) {
-		const body = w.slice(1);
-		const p = body.toLowerCase();
-		if (!body) words.push(w);
-		else if (/^[@＠]/.test(w)) out.assignee = body;
-		else if (/^[#＃]/.test(w)) out.labels.push(body);
-		else if (/^[!！]/.test(w) && p in PRIORITIES)
-			out.priority = PRIORITIES[p as keyof typeof PRIORITIES];
-		else words.push(w);
-	}
-	out.title = words.join(" ");
-	return out;
 }
 
 // ponytail: newest 500 only; add cursor paging when an issue's thread outgrows it.
