@@ -1,7 +1,7 @@
 {
 	"version": "6",
 	"dialect": "sqlite",
-	"id": "19cc69df-4b74-4b2b-b65d-cd0499815a9a",
+	"id": "7e96f1f3-a5f6-40e0-a8ff-c6ad1d81598e",
 	"prevId": "00000000-0000-0000-0000-000000000000",
 	"tables": {
 		"acceptance_criteria": {
@@ -254,6 +254,12 @@
 					"name": "agent_sessions_issue_idx",
 					"columns": ["issue_id"],
 					"isUnique": false
+				},
+				"agent_sessions_active_uq": {
+					"name": "agent_sessions_active_uq",
+					"columns": ["issue_id"],
+					"isUnique": true,
+					"where": "\"agent_sessions\".\"ended_at\" IS NULL"
 				}
 			},
 			"foreignKeys": {
@@ -1091,7 +1097,7 @@
 					"tableTo": "issues",
 					"columnsFrom": ["parent_id"],
 					"columnsTo": ["id"],
-					"onDelete": "no action",
+					"onDelete": "set null",
 					"onUpdate": "no action"
 				}
 			},

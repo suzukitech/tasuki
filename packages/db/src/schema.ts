@@ -117,7 +117,9 @@ export const issues = sqliteTable(
 		assigneeId: text("assignee_id").references(() => users.id),
 		reporterId: text("reporter_id").references(() => users.id),
 		approverId: text("approver_id").references(() => users.id),
-		parentId: text("parent_id").references((): AnySQLiteColumn => issues.id),
+		parentId: text("parent_id").references((): AnySQLiteColumn => issues.id, {
+			onDelete: "set null",
+		}),
 		dueDate: text("due_date"),
 		estimate: integer("estimate"),
 		rank: text("rank").notNull(),
@@ -128,7 +130,7 @@ export const issues = sqliteTable(
 			.notNull()
 			.default(false),
 		createdAt: createdAt(),
-		updatedAt: now("updated_at"),
+		updatedAt: now("updated_at").$onUpdate(() => new Date()),
 		closedAt: ts("closed_at"),
 	},
 	(t) => [
@@ -370,7 +372,13 @@ export const agentSessions = sqliteTable(
 		endedAt: ts("ended_at"),
 		outcome: text("outcome"),
 	},
-	(t) => [index("agent_sessions_issue_idx").on(t.issueId)],
+	(t) => [
+		index("agent_sessions_issue_idx").on(t.issueId),
+		// the work lock: at most one open session per issue
+		uniqueIndex("agent_sessions_active_uq")
+			.on(t.issueId)
+			.where(sql`${t.endedAt} IS NULL`),
+	],
 );
 
 export const issueTemplates = sqliteTable("issue_templates", {

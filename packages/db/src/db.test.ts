@@ -1,10 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { eq } from "drizzle-orm";
-import { type Db, issues, openDb, searchIssueIds, users } from "./index";
+import { eq, sql } from "drizzle-orm";
+import {
+	agentSessions,
+	type Db,
+	issues,
+	openDb,
+	searchIssueIds,
+	users,
+} from "./index";
 import { seedSampleProject } from "./seed";
 
 function setup() {
-	const db = openDb();
+	const db = openDb(":memory:");
 	const user = db
 		.insert(users)
 		.values({ email: "a@example.com", name: "A", passwordHash: "x" })
@@ -111,5 +118,63 @@ describe("search", () => {
 		expect(searchIssueIds(db, project.id, "gamma")).toEqual([i.id]);
 		db.delete(issues).where(eq(issues.id, i.id)).run();
 		expect(searchIssueIds(db, project.id, "gamma")).toHaveLength(0);
+	});
+});
+
+describe("review fixes", () => {
+	test("FTS stays correct after delete + VACUUM", () => {
+		const { db, project } = setup();
+		const gone = addIssue(db, project.id, 10, "消えるチケット");
+		const kept = addIssue(db, project.id, 11, "残るチケット本文");
+		db.delete(issues).where(eq(issues.id, gone.id)).run();
+		db.run(sql`VACUUM`);
+		expect(searchIssueIds(db, project.id, "残るチケット")).toEqual([kept.id]);
+		expect(searchIssueIds(db, project.id, "消えるチケット")).toEqual([]);
+	});
+
+	test("updated_at bumps on update", async () => {
+		const { db, project } = setup();
+		const issue = addIssue(db, project.id, 10, "a");
+		await Bun.sleep(5);
+		const after = db
+			.update(issues)
+			.set({ title: "b" })
+			.where(eq(issues.id, issue.id))
+			.returning()
+			.get();
+		expect(after.updatedAt.getTime()).toBeGreaterThan(
+			issue.updatedAt.getTime(),
+		);
+	});
+
+	test("deleting a parent orphans children instead of failing", () => {
+		const { db, project } = setup();
+		const parent = addIssue(db, project.id, 10, "親");
+		const child = addIssue(db, project.id, 11, "子");
+		db.update(issues)
+			.set({ parentId: parent.id })
+			.where(eq(issues.id, child.id))
+			.run();
+		db.delete(issues).where(eq(issues.id, parent.id)).run();
+		expect(
+			db.select().from(issues).where(eq(issues.id, child.id)).get()?.parentId,
+		).toBeNull();
+	});
+
+	test("only one open agent session per issue", () => {
+		const { db, project } = setup();
+		const issue = addIssue(db, project.id, 10, "lock");
+		const open = {
+			issueId: issue.id,
+			client: "claude-code",
+			expiresAt: new Date(),
+		};
+		const first = db.insert(agentSessions).values(open).returning().get();
+		expect(() => db.insert(agentSessions).values(open).run()).toThrow();
+		db.update(agentSessions)
+			.set({ endedAt: new Date() })
+			.where(eq(agentSessions.id, first.id))
+			.run();
+		expect(() => db.insert(agentSessions).values(open).run()).not.toThrow();
 	});
 });

@@ -9,10 +9,11 @@ export * from "./seed";
 
 export type Db = ReturnType<typeof openDb>;
 
-export function openDb(path = ":memory:") {
+export function openDb(path: string) {
 	const sqlite = new Database(path);
 	if (path !== ":memory:") sqlite.run("PRAGMA journal_mode=WAL");
 	sqlite.run("PRAGMA foreign_keys=ON");
+	sqlite.run("PRAGMA recursive_triggers=ON"); // REPLACE must fire the FTS delete trigger
 	sqlite.run("PRAGMA busy_timeout=5000");
 	const db = drizzle(sqlite, { schema });
 	migrate(db, { migrationsFolder: `${import.meta.dir}/../drizzle` });
@@ -29,7 +30,7 @@ export function searchIssueIds(
 	const like = `%${term.replace(/[\\%_]/g, "\\$&")}%`;
 	const match =
 		[...term].length >= 3
-			? sql`${issues}.rowid IN (SELECT rowid FROM issues_fts WHERE issues_fts MATCH ${`"${term.replaceAll('"', '""')}"`})`
+			? sql`${issues.id} IN (SELECT issue_id FROM issues_fts WHERE issues_fts MATCH ${`"${term.replaceAll('"', '""')}"`})`
 			: or(
 					sql`${issues.title} LIKE ${like} ESCAPE '\\'`,
 					sql`${issues.bodyMd} LIKE ${like} ESCAPE '\\'`,

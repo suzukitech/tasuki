@@ -1,6 +1,6 @@
 {
-	"id": "c2136efb-851d-4db1-a6b7-35fff95168b6",
-	"prevId": "19cc69df-4b74-4b2b-b65d-cd0499815a9a",
+	"id": "7bcdb003-e74c-4e3e-af43-c1b2463f2b35",
+	"prevId": "7e96f1f3-a5f6-40e0-a8ff-c6ad1d81598e",
 	"version": "6",
 	"dialect": "sqlite",
 	"tables": {
@@ -254,6 +254,12 @@
 					"name": "agent_sessions_issue_idx",
 					"columns": ["issue_id"],
 					"isUnique": false
+				},
+				"agent_sessions_active_uq": {
+					"name": "agent_sessions_active_uq",
+					"columns": ["issue_id"],
+					"where": "\"agent_sessions\".\"ended_at\" IS NULL",
+					"isUnique": true
 				}
 			},
 			"foreignKeys": {
@@ -1092,7 +1098,7 @@
 					"tableTo": "issues",
 					"columnsTo": ["id"],
 					"onUpdate": "no action",
-					"onDelete": "no action"
+					"onDelete": "set null"
 				}
 			},
 			"compositePrimaryKeys": {},

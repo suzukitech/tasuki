@@ -40,6 +40,7 @@ CREATE TABLE `agent_sessions` (
 );
 --> statement-breakpoint
 CREATE INDEX `agent_sessions_issue_idx` ON `agent_sessions` (`issue_id`);--> statement-breakpoint
+CREATE UNIQUE INDEX `agent_sessions_active_uq` ON `agent_sessions` (`issue_id`) WHERE "agent_sessions"."ended_at" IS NULL;--> statement-breakpoint
 CREATE TABLE `api_tokens` (
 	`id` text PRIMARY KEY NOT NULL,
 	`user_id` text NOT NULL,
@@ -158,7 +159,7 @@ CREATE TABLE `issues` (
 	FOREIGN KEY (`assignee_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`reporter_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action,
 	FOREIGN KEY (`approver_id`) REFERENCES `users`(`id`) ON UPDATE no action ON DELETE no action,
-	FOREIGN KEY (`parent_id`) REFERENCES `issues`(`id`) ON UPDATE no action ON DELETE no action,
+	FOREIGN KEY (`parent_id`) REFERENCES `issues`(`id`) ON UPDATE no action ON DELETE set null,
 	CONSTRAINT "issues_priority_range" CHECK("issues"."priority" IS NULL OR "issues"."priority" BETWEEN 0 AND 4)
 );
 --> statement-breakpoint
