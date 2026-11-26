@@ -634,3 +634,19 @@ describe("transition table", () => {
 		);
 	});
 });
+
+test("startImplementation re-checks the plan gate when already in_progress", () => {
+	const w = setup();
+	const human = w.ctx(w.u.mem);
+	const tok = w.ctx(w.u.mem, "token");
+	w.issue({ flow: "simple" });
+	const sid = (c: string) =>
+		w.db
+			.select()
+			.from(statuses)
+			.all()
+			.find((s) => s.category === c)?.id as string;
+	moveIssue(human, "WEB-1", { statusId: sid("in_progress") });
+	updateIssue(human, "WEB-1", { flow: "ai" }); // switched mid-work, no plan exists
+	expect(codeOf(() => startImplementation(tok, "WEB-1"))).toBe("gate");
+});

@@ -35,7 +35,7 @@ import {
 	patchIssue,
 } from "./issues";
 import { requireSession } from "./permissions";
-import { transition } from "./transitions";
+import { requireApprovedPlan, transition } from "./transitions";
 
 const LOCK_MS = 30 * 60 * 1000;
 const reviewUrl = (ref: string, tab: string) => `/issues/${ref}?tab=${tab}`;
@@ -228,6 +228,7 @@ export function startImplementation(ctx: Ctx, ref: string) {
 		const l = loadIssue(c, ref, "member");
 		if (l.category !== "in_progress")
 			transition(c, l, "in_progress", "startImplementation");
+		else requireApprovedPlan(c, l); // e.g. flow switched simple -> ai mid-work
 		const now = nowOf(c);
 		endSessions(c, l.issue.id, "expired", lte(agentSessions.expiresAt, now));
 		const open = c.db

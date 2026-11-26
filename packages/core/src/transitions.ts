@@ -74,13 +74,18 @@ function requireApprover(c: Ctx, l: Loaded) {
 		fail("forbidden", "approver or project manager only");
 }
 
-const hasApprovedPlan = (c: Ctx, issueId: string) =>
-	!!c.db
+/** The plan-approval gate for working on an ai-flow issue (unless skipPlanReview). */
+export function requireApprovedPlan(c: Ctx, l: Loaded) {
+	if (l.issue.flow !== "ai" || l.issue.skipPlanReview) return;
+	const approved = c.db
 		.select({ id: plans.id })
 		.from(plans)
-		.where(and(eq(plans.issueId, issueId), eq(plans.state, "approved")))
+		.where(and(eq(plans.issueId, l.issue.id), eq(plans.state, "approved")))
 		.limit(1)
 		.get();
+	if (!approved)
+		fail("gate", "no approved plan: submit a plan and get it approved first");
+}
 
 /**
  * Change an issue's status category as `op`, enforcing the table, session and approver
@@ -113,14 +118,7 @@ export function transition(
 		}
 		if (e?.session) requireSession(c, `${op} (${from} -> ${to})`);
 		if (e?.approver) requireApprover(c, l);
-		if (
-			from === "ready" &&
-			to === "in_progress" &&
-			l.issue.flow === "ai" &&
-			!l.issue.skipPlanReview &&
-			!hasApprovedPlan(c, l.issue.id)
-		)
-			fail("gate", "no approved plan: submit a plan and get it approved first");
+		if (from === "ready" && to === "in_progress") requireApprovedPlan(c, l);
 	}
 	const target = opts.target ?? statusFor(c, l.project.id, to);
 	patchIssue(c, l.issue.id, {
