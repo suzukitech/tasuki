@@ -369,10 +369,8 @@ describe("criteria", () => {
 		]);
 		const g = getIssue(w.human, w.ref);
 		expect(g.category).toBe("plan_review");
-		expect(g.plans[0]).toMatchObject({
-			state: "rejected",
-			reviewNote: "criteria changed",
-		});
+		// the same plan is back for review (not stuck): approver can approve it again
+		expect(g.plans[0]).toMatchObject({ state: "proposed", reviewedBy: null });
 		expect(g.criteria.find((c) => c.id === c1?.id)?.result).toBe("pending");
 		expect(g.criteria).toHaveLength(3);
 		expect(g.activities.some((a) => a.action === "plan_revoked")).toBe(true);
@@ -390,6 +388,26 @@ describe("criteria", () => {
 				updateCriteria(w.human, w.ref, [{ id: "bogus", text: "x" }]),
 			),
 		).toBe("invalid");
+	});
+	test("token cannot keep an approval by leaving in_progress and editing criteria", () => {
+		const w = world();
+		w.toInProgress();
+		moveIssue(w.tok, w.ref, { statusId: w.statusId("ready") });
+		updateCriteria(w.tok, w.ref, [{ text: "easier criterion" }]);
+		expect(codeOf(() => startImplementation(w.tok, w.ref))).toBe("gate");
+		expect(
+			codeOf(() =>
+				moveIssue(w.tok, w.ref, { statusId: w.statusId("in_progress") }),
+			),
+		).toBe("gate");
+	});
+	test("after revocation the plan can be re-approved", () => {
+		const w = world();
+		w.toInProgress();
+		updateCriteria(w.human, w.ref, [{ text: "changed" }]);
+		expect(w.cat()).toBe("plan_review");
+		approvePlan(w.human, w.ref);
+		expect(w.cat()).toBe("in_progress");
 	});
 	test("editing criteria during plan_review keeps state", () => {
 		const w = world();

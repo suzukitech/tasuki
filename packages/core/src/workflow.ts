@@ -396,18 +396,19 @@ export function updateCriteria(ctx: Ctx, ref: string, criteria: unknown) {
 			before.map((x) => x.text),
 			next.map((x) => x.text),
 		);
+		// Criteria changed after approval: in ANY category the approval is void. The same
+		// plan goes back to `proposed` so the approver re-reviews it against the new criteria.
 		const approved = planIn(c, l.issue.id, "approved");
-		if (
-			approved &&
-			(l.category === "in_progress" || l.category === "impl_review")
-		) {
+		if (approved) {
 			c.db
 				.update(plans)
-				.set({ state: "rejected", reviewNote: "criteria changed" })
+				.set({ state: "proposed", reviewedBy: null, reviewNote: null })
 				.where(eq(plans.id, approved.id))
 				.run();
 			endSessions(c, l.issue.id, "plan_revoked");
-			transition(c, l, "plan_review", "updateCriteria");
+			if (l.category === "in_progress" || l.category === "impl_review")
+				transition(c, l, "plan_review", "updateCriteria");
+			else patchIssue(c, l.issue.id, {});
 			log(
 				c,
 				l.issue.id,
