@@ -121,3 +121,15 @@ test("getAnswers: answers to own questions and plan rejection", () => {
 	expect(a.planRejection).toEqual({ version: 1, note: "too vague" });
 	expect(a.reportReturn).toBeNull();
 });
+
+test("extendLockIfHeld respects token projectIds and membership", () => {
+	const w = world();
+	const ref = w.mk({ title: "a" });
+	claimNext(w.ctx(w.u.mem, "token"));
+	const elsewhere = w.ctx(w.u.mem, "token", {
+		scopes: ["read", "write"],
+		projectIds: ["some-other-project"],
+	});
+	expect(extendLockIfHeld(elsewhere, ref)).toBeNull();
+	expect(extendLockIfHeld(w.ctx(w.u.mem, "token"), ref)).not.toBeNull();
+});

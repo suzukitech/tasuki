@@ -49,7 +49,11 @@ import {
 	patchIssue,
 	updateIssue,
 } from "./issues";
-import { requireScope, requireSession } from "./permissions";
+import {
+	requireProjectRole,
+	requireScope,
+	requireSession,
+} from "./permissions";
 import { requireApprovedPlan, transition } from "./transitions";
 
 const LOCK_MS = 30 * 60 * 1000;
@@ -422,8 +426,19 @@ export function touchLock(ctx: Ctx, ref: string) {
 export function extendLockIfHeld(ctx: Ctx, ref: string) {
 	const m = /^([A-Za-z]{2,10})-(\d+)$/.exec(ref.trim());
 	if (!m) return null;
-	if (ctx.actor.auth === "token" && !ctx.actor.token?.scopes.includes("write"))
-		return null;
+	const project = ctx.db
+		.select({ id: projects.id })
+		.from(projects)
+		.where(eq(projects.key, (m[1] ?? "").toUpperCase()))
+		.get();
+	if (!project) return null;
+	// same access rule as every other write: write scope, token projectIds, member role
+	try {
+		requireProjectRole(ctx, project.id, "member");
+	} catch (e) {
+		if (e instanceof TasukiError) return null;
+		throw e;
+	}
 	const now = nowOf(ctx);
 	return (
 		ctx.db
