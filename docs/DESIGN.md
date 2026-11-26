@@ -340,27 +340,31 @@ claude mcp add --transport http tasuki https://tasuki.example.com/mcp --header "
 
 Web UI、CLI、外部連携はすべて `/api/v1` を使います。認証はWeb UIがCookieセッション、それ以外がBearerトークンです。
 
-| メソッド             | パス                      | 内容                                                   |
-| -------------------- | ------------------------- | ------------------------------------------------------ |
-| GET / POST           | `/projects`               | 一覧、作成                                             |
-| GET / PATCH          | `/projects/:key`          | 取得、設定変更                                         |
-| GET / POST           | `/projects/:key/issues`   | 検索（`?q=` にフィルタ書式、カーソルページング）、作成 |
-| GET / PATCH / DELETE | `/issues/:ref`            | `:ref` は `WEB-12`                                     |
-| POST                 | `/issues/:ref/move`       | ステータスとrankを同時に変更（ボードのドラッグ）       |
-| GET / POST           | `/issues/:ref/comments`   | コメント                                               |
-| GET                  | `/issues/:ref/activities` | 変更履歴                                               |
-| POST                 | `/issues/bulk`            | 一括更新（担当、ステータス、ラベル）                   |
-| GET                  | `/events`                 | SSE。参加プロジェクトの変更を配信                      |
-| POST / DELETE        | `/me/tokens`              | アクセストークンの発行と失効                           |
+| メソッド             | パス                      | 内容                                                                                             |
+| -------------------- | ------------------------- | ------------------------------------------------------------------------------------------------ |
+| GET / POST           | `/projects`               | 一覧、作成                                                                                       |
+| GET / PATCH          | `/projects/:key`          | 取得、設定変更（PATCHは送った項目だけ変える。名前だけ送っても説明は消えない）                    |
+| GET / POST           | `/projects/:key/issues`   | 検索（`?q=` にフィルタ書式、カーソルページング）、作成                                           |
+| GET / PATCH / DELETE | `/issues/:ref`            | `:ref` は `WEB-12`                                                                               |
+| POST                 | `/issues/:ref/move`       | ステータスとrankを同時に変更（ボードのドラッグ）                                                 |
+| GET / POST           | `/issues/:ref/comments`   | コメント                                                                                         |
+| GET                  | `/issues/:ref/activities` | 変更履歴                                                                                         |
+| POST                 | `/issues/bulk`            | 一括更新（担当、ステータス、ラベル。変更項目が1つもなければ400。全チケットの権限を先に確かめる） |
+| GET                  | `/events`                 | SSE。参加プロジェクトの変更を配信                                                                |
+| POST / DELETE        | `/me/tokens`              | アクセストークンの発行と失効                                                                     |
 
 - 更新は `If-Match`（`updated_at` ベースのETag）で楽観ロック。人とAIが同時に同じチケットを変えても上書きしない。`GET /issues/:ref` が `ETag: "<updatedAtのms>"` を返し、`PATCH` の `If-Match` が一致しなければ **412 Precondition Failed**（`code: "precondition"`）。
 - エラーは RFC 9457（Problem Details）形式（`application/problem+json`: `type` / `title` / `status` / `detail` ＋ `code`）。
-- チケット一覧は `?q=`（フィルタ書式）＋ `?cursor=<チケット番号>&limit=`（番号の降順）。応答は `{items, nextCursor}`。
+- チケット一覧は `?q=`（フィルタ書式）＋ `?cursor=<チケット番号（1以上の整数。空文字は指定なし）>&limit=`（番号の降順）。応答は `{items, nextCursor}`。
 - 追加ルート（Web UI用）: `GET /health`、`GET /setup/status`、`POST /setup`、`POST /auth/login`、`POST /auth/logout`、`POST /invites`（管理者）、`POST /invites/accept`、`GET /me`、`GET /me/tokens`、`DELETE /me/tokens/:id`、ワークフロー操作 `POST /issues/:ref/plan/approve`・`plan/reject`・`report/return`・`complete`（AIフローの結果承認も `complete`）、`PUT /issues/:ref/criteria`、`POST /questions/:id/answer`。これらの人間ゲートはセッションのみ通る（トークンは409 `gate`）。
 - `POST /me/tokens` は平文トークンを1回だけ返し、そのまま貼れる `claudeMcpAdd`（`claude mcp add --transport http ...`）も返す。
 - CSRF: Cookie認証の更新系リクエストは `X-Tasuki-CSRF` ヘッダが必要。値はセッションごとに決まり、ログイン時に非HttpOnlyの `tasuki_csrf` Cookieで渡す（ダブルサブミット）。Bearerトークンは不要。
-- ログイン失敗とトークン認証失敗はIPごとに1分10回まででレート制限（429）。ログイン失敗はメールアドレス（小文字化）ごとにも数え、IPを変えても1アカウントへの総当たりはできない。IPは接続元アドレス。`X-Forwarded-For` は偽装できるため、環境変数 `TASUKI_TRUST_PROXY=1` のときだけ信用する（リバースプロキシ1段を想定し、プロキシが付け足した末尾の値を使う）。単一プロセスのメモリ内カウンタで、期限切れは60秒ごとに掃除する。
-- `GET /events`（SSE）はプロセス内pub/sub。購読者は読める権限のあるプロジェクトのイベントだけ受け取る（権限は購読者ごとに30秒キャッシュ）。25秒ごとにハートビートし、そのたびに接続に使ったセッション/トークンが生きているか（存在・未失効・期限内）を確かめ、死んでいれば切る。ログアウトとトークン失効は、その認証情報のストリームをその場で閉じる。1ユーザー同時5本まで（超えると429）。書き込みで例外が出た購読者は外す。
+- ログイン失敗とトークン認証失敗はIPごとに1分10回までレート制限する（429）。ログインはメールアドレス（小文字化）ごとにも数え、こちらは1分20回まで（IPを変えても1アカウントへの総当たりはできない）。試行は認証処理に入る前に数える（並列に大量のリクエストを投げても、上限を超えるパスワード検証は走らない）。ログインに成功したら、その1回分をIPとアカウント両方のカウンタから戻す。トレードオフ: アカウント単位の制限は、他人が失敗を繰り返して本人を最大1分（窓の長さ）締め出せる。セルフホストのチーム用途なので許容する。IPは接続元アドレス。`X-Forwarded-For` は偽装できるため、環境変数 `TASUKI_TRUST_PROXY=1` のときだけ信用する（リバースプロキシ1段を想定し、プロキシが付け足した末尾の値を使う）。単一プロセスのメモリ内カウンタで、期限切れは60秒ごとに掃除する。
+- ログインCSRF対策: 更新系（GET/HEAD/OPTIONS以外）でボディがあるリクエストと、認証なしのPOST（`/setup`、`/auth/login`、`/invites/accept`。ボディが空でも）は `Content-Type: application/json`（`; charset=...` は可）が必須。違えば415（problem+json）。フォームやtext/plainによる他サイトからの送信（単純リクエスト）はこれで弾ける。さらに認証なしのPOSTで `Origin` ヘッダがあり、`TASUKI_BASE_URL` のオリジンと違う場合は403（`csrf`）。
+- イベント（SSE・通知）は実際に変更があったときだけ出す。受入基準の更新で内容が同じ、チケット更新で変わる項目がない場合は出さない。
+- アクセストークンの `expiresAt` はISO 8601文字列のみ（数値は拒否）で、未来の日時でなければならない。
+- 空のボディを許すエンドポイント（承認・完了）でも、空のときだけ `{}` と扱う。壊れたJSONは400。
+- `GET /events`（SSE）はプロセス内pub/sub。購読者は読める権限のあるプロジェクトのイベントだけ受け取る（権限は購読者ごとに30秒キャッシュ）。25秒ごとにハートビートし、そのたびに接続に使ったセッション/トークンが生きているか（存在・未失効・期限内）を確かめ、死んでいれば切る。ログアウトとトークン失効は、その認証情報のストリームをその場で閉じる（待機中のハートビートを即座に起こしてハンドラを終わらせる）。1ユーザー同時5本まで（超えると429）。書き込みが失敗した購読者（同期の例外も非同期の拒否も）は外して閉じる。
 - イベントは core が発行する。チケットを変える関数（作成・更新・削除・移動・コメント・ワークフロー操作・一括更新）は `ctx.emit` に向けてイベントを記録し、最外のトランザクションがコミットした後にだけ発火する（ロールバックでは発火しない）。一括更新はチケットごとに1回 `issue.updated`。サーバーは `ctx.emit` に購読の `publish` を渡すだけで、ルートごとの発火はしない。
 - チケットのDTOには `ref`（`WEB-12`）を含める。一覧は本文（`bodyMd`）を含まない列だけ返す。コメントと履歴は新しい500件までを古い順に返す。
 - `TASUKI_SECRET` はサーバー側のHMAC署名などが必要になるまで生成しない（セッション・トークン・CSRFはすべてランダム値＋DBのハッシュで足り、秘密鍵を使わない）。

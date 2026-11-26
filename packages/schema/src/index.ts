@@ -19,6 +19,10 @@ export const createProjectInput = z.object({
 	description: md().default(""),
 });
 
+export const updateProjectInput = z
+	.object({ name: createProjectInput.shape.name, description: md() })
+	.partial();
+
 const title = z.string().trim().min(1).max(200);
 const bodyMd = md(50000);
 const flow = z.enum(["ai", "simple"]);
@@ -100,7 +104,11 @@ export const tokenInput = z.object({
 	name: z.string().trim().min(1).max(100),
 	scopes: z.array(z.enum(["read", "write"])).min(1),
 	projectIds: z.array(z.string()).nullable().default(null),
-	expiresAt: z.coerce.date().nullish(),
+	expiresAt: z.iso
+		.datetime({ offset: true })
+		.transform((s) => new Date(s))
+		.refine((d) => d.getTime() > Date.now(), "must be in the future")
+		.nullish(),
 });
 
 export const registerInput = z.object({
@@ -130,6 +138,9 @@ export const answerInput = z.object({ answerMd: z.string() });
 export const commentInput = z.object({ bodyMd: z.string() });
 export const listQuery = z.object({
 	q: z.string().default(""),
-	cursor: z.coerce.number().int().min(0).optional(),
+	cursor: z.preprocess(
+		(v) => (v === "" ? undefined : v),
+		z.coerce.number().int().min(1).optional(),
+	),
 	limit: z.coerce.number().int().min(1).max(200).optional(),
 });

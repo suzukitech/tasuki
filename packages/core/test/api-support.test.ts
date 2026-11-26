@@ -55,6 +55,28 @@ describe("support for the REST layer", () => {
 		);
 	});
 
+	test("updateProject keeps description when only the name is patched", () => {
+		const { ctx, u } = setup();
+		updateProject(ctx(u.mgr), "WEB", { description: "keep me" });
+		const p = updateProject(ctx(u.mgr), "WEB", { name: "Only name" });
+		expect(p.name).toBe("Only name");
+		expect(p.description).toBe("keep me");
+	});
+
+	test("bulkUpdate: nothing to update is invalid; every ref is authorized first", () => {
+		const { ctx, u, issue } = setup();
+		issue();
+		expect(codeOf(() => bulkUpdate(ctx(u.mem), { refs: ["WEB-1"] }))).toBe(
+			"invalid",
+		);
+		expect(codeOf(() => bulkUpdate(ctx(u.out), { refs: ["WEB-1"] }))).not.toBe(
+			"invalid",
+		);
+		expect(
+			codeOf(() => bulkUpdate(ctx(u.out), { refs: ["WEB-1"], labels: ["x"] })),
+		).toBeDefined();
+	});
+
 	test("tokens: list without secrets, revoke, session-only", async () => {
 		const { ctx, u } = setup();
 		const { id } = createApiToken(ctx(u.mem), { name: "a", scopes: ["read"] });

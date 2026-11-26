@@ -82,6 +82,7 @@ const TITLES: Record<number, string> = {
 	404: "Not Found",
 	409: "Conflict",
 	412: "Precondition Failed",
+	415: "Unsupported Media Type",
 	429: "Too Many Requests",
 };
 
@@ -110,7 +111,7 @@ const csrfOf = (session: string) => sha256(`csrf:${session}`);
  * Fixed-window counter per key.
  * ponytail: in-memory, single process; a multi-instance deploy needs a shared store.
  */
-function rateLimiter(max: number, windowMs = 60_000) {
+function rateLimiter(windowMs = 60_000) {
 	const hits = new Map<string, { n: number; reset: number }>();
 	setInterval(() => {
 		const now = Date.now();
@@ -120,21 +121,41 @@ function rateLimiter(max: number, windowMs = 60_000) {
 		const e = hits.get(k);
 		return e && e.reset > Date.now() ? e : undefined;
 	};
+	const hit = (k: string) => {
+		const e = live(k);
+		if (e) e.n++;
+		else hits.set(k, { n: 1, reset: Date.now() + windowMs });
+	};
 	return {
-		blocked: (...keys: string[]) => keys.some((k) => (live(k)?.n ?? 0) >= max),
-		hit(...keys: string[]) {
-			for (const k of keys) {
-				const e = live(k);
-				if (e) e.n++;
-				else hits.set(k, { n: 1, reset: Date.now() + windowMs });
-			}
+		blocked: (k: string, max: number) => (live(k)?.n ?? 0) >= max,
+		hit,
+		/** Count one attempt now; false when the key was already at `max` (still counted). */
+		take(k: string, max: number) {
+			const over = (live(k)?.n ?? 0) >= max;
+			hit(k);
+			return !over;
+		},
+		refund(k: string) {
+			const e = live(k);
+			if (e && --e.n <= 0) hits.delete(k);
 		},
 	};
 }
 
+const JSON_CT = /^application\/json\s*(;\s*charset=\S+)?$/i;
+
 const json = (c: C): Promise<unknown> =>
 	c.req.json().catch(() => fail("invalid", "request body must be JSON"));
-const jsonOrEmpty = (c: C): Promise<unknown> => c.req.json().catch(() => ({}));
+/** Only an empty body is `{}`; anything else must parse. */
+const jsonOrEmpty = async (c: C): Promise<unknown> => {
+	const t = await c.req.text();
+	if (!t.trim()) return {};
+	try {
+		return JSON.parse(t);
+	} catch {
+		return fail("invalid", "request body must be JSON");
+	}
+};
 
 export function createApp(
 	db: Db,
@@ -142,7 +163,10 @@ export function createApp(
 ) {
 	const baseUrl = opts.baseUrl.replace(/\/$/, "");
 	const secure = baseUrl.startsWith("https:");
-	const limiter = rateLimiter(opts.rateLimit ?? 10);
+	const ipMax = opts.rateLimit ?? 10;
+	const acctMax = ipMax * 2;
+	const limiter = rateLimiter();
+	const origin = new URL(baseUrl).origin;
 	const events = createEvents();
 	const app = new Hono<Env>();
 	const api = new Hono<Env>();
@@ -189,13 +213,28 @@ export function createApp(
 	api.use("*", async (c, next) => {
 		const ip = ipOf(c);
 		c.set("ip", ip);
-		if (PUBLIC.has(c.req.path)) return next();
+		const isPublic = PUBLIC.has(c.req.path);
+		if (!SAFE.has(c.req.method)) {
+			const post = c.req.method === "POST";
+			if (
+				(c.req.raw.body !== null || (isPublic && post)) &&
+				!JSON_CT.test(c.req.header("content-type") ?? "")
+			)
+				throw new TasukiError(
+					"unsupported_media",
+					"Content-Type must be application/json",
+				);
+			const o = c.req.header("origin");
+			if (isPublic && post && o !== undefined && o !== origin)
+				throw new TasukiError("csrf", "cross-origin request refused");
+		}
+		if (isPublic) return next();
 		const bearer = /^Bearer\s+(\S+)$/i.exec(
 			c.req.header("authorization") ?? "",
 		);
 		let actor: Actor | null = null;
 		if (bearer) {
-			if (limiter.blocked(ip)) throw tooMany();
+			if (limiter.blocked(ip, ipMax)) throw tooMany();
 			const client = (c.req.header("x-tasuki-client") ?? "")
 				.replace(/[^\w.-]/g, "")
 				.slice(0, 40);
@@ -236,16 +275,17 @@ export function createApp(
 	});
 	api.post("/auth/login", async (c) => {
 		const b = loginInput.safeParse(await json(c));
-		// also count per account, so rotating IPs cannot brute-force one email
-		const keys = b.success
-			? [c.get("ip"), `acct:${b.data.email.trim().toLowerCase()}`]
-			: [c.get("ip")];
-		if (limiter.blocked(...keys)) throw tooMany();
+		// Count the attempt BEFORE the (slow) password check so a parallel burst cannot
+		// slip past the limit; refund on success. Per account too, so rotating IPs
+		// cannot brute-force one email.
+		const keys: [string, number][] = [[c.get("ip"), ipMax]];
+		if (b.success)
+			keys.push([`acct:${b.data.email.trim().toLowerCase()}`, acctMax]);
+		const ok = keys.map(([k, max]) => limiter.take(k, max)).every(Boolean);
+		if (!ok) throw tooMany();
 		const r = b.success ? await login(db, b.data.email, b.data.password) : null;
-		if (!r) {
-			limiter.hit(...keys);
-			throw new TasukiError("unauthorized", "invalid email or password");
-		}
+		if (!r) throw new TasukiError("unauthorized", "invalid email or password");
+		for (const [k] of keys) limiter.refund(k);
 		setCookies(c, r.session);
 		return c.json(r.user);
 	});
@@ -387,21 +427,37 @@ export function createApp(
 	// --- SSE ---
 	api.get("/events", (c) => {
 		let stream: SSEStreamingApi | undefined;
+		let closed = false;
+		let wake = () => {};
 		const sub = events.subscribe(
 			ctxOf(c),
 			c.get("cred"),
-			(e) => void stream?.writeSSE({ event: e.type, data: JSON.stringify(e) }),
-			() => stream?.abort(),
+			// returns the write promise so a failed write removes the subscriber
+			(e) => stream?.writeSSE({ event: e.type, data: JSON.stringify(e) }),
+			() => {
+				closed = true;
+				stream?.abort();
+				wake();
+			},
 		);
 		if (!sub)
 			throw new TasukiError("rate_limited", "too many open event streams");
 		return streamSSE(c, async (s) => {
 			stream = s;
-			s.onAbort(sub.off);
+			s.onAbort(() => {
+				sub.off();
+				wake();
+			});
 			await s.writeSSE({ event: "ready", data: "{}" });
-			while (!s.aborted) {
-				await s.sleep(25_000);
-				if (s.aborted || !sub.ok()) break;
+			while (!s.aborted && !closed) {
+				await new Promise<void>((done) => {
+					const t = setTimeout(done, 25_000);
+					wake = () => {
+						clearTimeout(t);
+						done();
+					};
+				});
+				if (s.aborted || closed || !sub.ok()) break;
 				await s.writeSSE({ event: "ping", data: "" });
 			}
 		});

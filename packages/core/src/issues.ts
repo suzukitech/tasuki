@@ -405,7 +405,7 @@ export function updateIssue(
 			}
 		}
 		logAll(c, issue.id, acts);
-		record(c, "issue.updated", project.id, l.ref);
+		if (Object.keys(set).length) record(c, "issue.updated", project.id, l.ref);
 		const row = Object.keys(set).length ? patchIssue(c, issue.id, set) : issue;
 		return { ...row, ref: l.ref };
 	});

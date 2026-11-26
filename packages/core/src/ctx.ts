@@ -32,6 +32,7 @@ const STATUS = {
 	precondition: 412,
 	unauthorized: 401,
 	csrf: 403,
+	unsupported_media: 415,
 	rate_limited: 429,
 } as const;
 

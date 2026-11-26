@@ -7,7 +7,7 @@ import {
 	statuses,
 	users,
 } from "@tasuki/db";
-import { createProjectInput } from "@tasuki/schema";
+import { createProjectInput, updateProjectInput } from "@tasuki/schema";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { atomic, type Ctx, fail, parse } from "./ctx";
 import { type Role, requireProjectRole, requireScope } from "./permissions";
@@ -91,10 +91,6 @@ export function listProjects(ctx: Ctx) {
 		.all()
 		.map((r) => ({ ...r.project, role: r.role as Role }));
 }
-
-const updateProjectInput = createProjectInput
-	.pick({ name: true, description: true })
-	.partial();
 
 export function updateProject(ctx: Ctx, key: string, patch: unknown) {
 	const inp = parse(updateProjectInput, patch);

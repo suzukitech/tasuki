@@ -355,7 +355,6 @@ export function updateCriteria(ctx: Ctx, ref: string, criteria: unknown) {
 	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "member");
 		const before = criteriaOf(c, l.issue.id);
-		announce(c, l, "criteria.updated");
 		const keep = new Set(next.map((x) => x.id).filter(Boolean));
 		let changed = false;
 		for (const old of before) {
@@ -400,6 +399,7 @@ export function updateCriteria(ctx: Ctx, ref: string, criteria: unknown) {
 			}
 		});
 		if (!changed) return criteriaOf(c, l.issue.id);
+		announce(c, l, "criteria.updated");
 		log(
 			c,
 			l.issue.id,
@@ -636,6 +636,9 @@ export function bulkUpdate(ctx: Ctx, input: unknown) {
 		const edit = Object.fromEntries(
 			Object.entries(fields).filter(([, v]) => v !== undefined),
 		);
+		for (const ref of refs) loadIssue(c, ref, "member"); // authorize all first
+		if (!Object.keys(edit).length && !statusId)
+			fail("invalid", "nothing to update");
 		const inner: Ctx = { ...c, pending: [] }; // swallow the per-op events
 		for (const ref of refs) {
 			if (Object.keys(edit).length) updateIssue(inner, ref, edit);

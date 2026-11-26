@@ -68,7 +68,7 @@ describe("api tokens", () => {
 			name: "p",
 			scopes: ["write"],
 			projectIds: ["x"],
-			expiresAt: new Date(clock.t.getTime() + 1000),
+			expiresAt: new Date(Date.now() + 60_000).toISOString(),
 		});
 		expect(
 			resolveToken(db, r.token, undefined, { now: () => clock.t })?.token
@@ -86,6 +86,25 @@ describe("api tokens", () => {
 		expect(
 			await codeOf(() => createApiToken(ctx(u.mem), { name: "x", scopes: [] })),
 		).toBe("invalid");
+	});
+	test("token expiresAt: future ISO string only", async () => {
+		const { ctx, u } = setup();
+		const mk = (expiresAt: unknown) =>
+			codeOf(() =>
+				createApiToken(ctx(u.mem), {
+					name: "x",
+					scopes: ["read"],
+					expiresAt,
+				} as never),
+			);
+		expect(await mk(Date.now() + 60_000)).toBe("invalid"); // number
+		expect(await mk(new Date(Date.now() + 60_000))).toBe("invalid"); // Date object
+		expect(await mk(new Date(Date.now() - 1000).toISOString())).toBe("invalid"); // past
+		expect(await mk("not a date")).toBe("invalid");
+		expect(
+			await mk(new Date(Date.now() + 60_000).toISOString()),
+		).toBeUndefined();
+		expect(await mk(null)).toBeUndefined();
 	});
 });
 

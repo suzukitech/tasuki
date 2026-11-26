@@ -8,6 +8,7 @@ import {
 	type IssueEvent,
 	pageIssues,
 	parseEtag,
+	updateCriteria,
 	updateIssue,
 } from "../src/index";
 import { setup } from "./fixture";
@@ -48,6 +49,24 @@ describe("events", () => {
 		]);
 		const page = pageIssues(w.ctx(), "WEB", "");
 		expect(page.items.every((x) => !("bodyMd" in x))).toBe(true);
+	});
+
+	test("no event when nothing changed (updateIssue, updateCriteria)", () => {
+		const w = watched();
+		const i = createIssue(w.ctx(), "WEB", { title: "a" });
+		w.events.length = 0;
+		updateIssue(w.ctx(), i.ref, { title: "a" });
+		updateIssue(w.ctx(), i.ref, {});
+		expect(w.events).toEqual([]);
+		const crit = updateCriteria(w.ctx(), i.ref, [{ text: "c1" }]);
+		expect(w.events.map((e) => e.type)).toEqual(["criteria.updated"]);
+		w.events.length = 0;
+		updateCriteria(
+			w.ctx(),
+			i.ref,
+			crit.map((c) => ({ id: c.id, text: c.text })),
+		);
+		expect(w.events).toEqual([]);
 	});
 
 	test("no event when the operation rolls back", () => {

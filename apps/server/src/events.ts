@@ -9,7 +9,7 @@ type Cred = { kind: "session" | "token"; hash: string };
 type Sub = {
 	ctx: Ctx;
 	cred: Cred;
-	send: (e: IssueEvent & { at: string }) => void;
+	send: (e: IssueEvent & { at: string }) => unknown;
 	close: () => void;
 	/** key (projectId or "cred") -> verdict, valid until `until` */
 	cache: Map<string, { ok: boolean; until: number }>;
@@ -76,9 +76,10 @@ export function createEvents() {
 				if (!cached(s, e.projectId, () => canRead(s.ctx, e.projectId)))
 					continue;
 				try {
-					s.send(ev);
+					// a failed write (sync throw or async rejection) drops the subscriber
+					Promise.resolve(s.send(ev)).catch(() => kill(s));
 				} catch {
-					subs.delete(s);
+					kill(s);
 				}
 			}
 		},

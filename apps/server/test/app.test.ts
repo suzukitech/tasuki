@@ -23,6 +23,7 @@ describe("auth & errors", () => {
 		expect((await bad.json()).code).toBe("invalid");
 		const notJson = await h.app.request("/api/v1/setup", {
 			method: "POST",
+			headers: { "content-type": "application/json" },
 			body: "{",
 		});
 		expect(notJson.status).toBe(400);
@@ -156,7 +157,7 @@ describe("rate limit: client address", () => {
 			429,
 		);
 		// rotating IPs against one account is stopped by the per-email counter
-		for (let i = 0; i < 3; i++)
+		for (let i = 0; i < 6; i++)
 			expect((await login(h, "Victim@Example.com", `2.2.2.${i}`)).status).toBe(
 				401,
 			);
