@@ -10,7 +10,13 @@ export type Me = {
 	role: "admin" | "member";
 	auth: "session" | "token";
 };
-export type Project = { id: string; key: string; name: string; role: Role };
+export type Project = {
+	id: string;
+	key: string;
+	name: string;
+	description: string;
+	role: Role;
+};
 export type Status = {
 	id: string;
 	name: string;
@@ -23,6 +29,8 @@ export type IssueCore = {
 	id: string;
 	ref: string;
 	number: number;
+	/** fractional-indexing key: order within a status column */
+	rank: string;
 	title: string;
 	statusId: string;
 	priority: number | null;

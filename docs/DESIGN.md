@@ -342,21 +342,21 @@ claude mcp add --transport http tasuki https://tasuki.example.com/mcp --header "
 
 Web UI、CLI、外部連携はすべて `/api/v1` を使います。認証はWeb UIがCookieセッション、それ以外がBearerトークンです。
 
-| メソッド             | パス                      | 内容                                                                                             |
-| -------------------- | ------------------------- | ------------------------------------------------------------------------------------------------ |
-| GET / POST           | `/projects`               | 一覧、作成                                                                                       |
-| GET / PATCH          | `/projects/:key`          | 取得、設定変更（PATCHは送った項目だけ変える。名前だけ送っても説明は消えない）                    |
-| GET / POST           | `/projects/:key/issues`   | 検索（`?q=` にフィルタ書式、カーソルページング）、作成                                           |
-| GET / PATCH / DELETE | `/issues/:ref`            | `:ref` は `WEB-12`                                                                               |
-| POST                 | `/issues/:ref/move`       | ステータスとrankを同時に変更（ボードのドラッグ）                                                 |
-| GET / POST           | `/issues/:ref/comments`   | コメント                                                                                         |
-| GET                  | `/issues/:ref/activities` | 変更履歴                                                                                         |
-| POST                 | `/issues/bulk`            | 一括更新（担当、ステータス、ラベル。変更項目が1つもなければ400。全チケットの権限を先に確かめる） |
-| GET                  | `/events`                 | SSE。参加プロジェクトの変更を配信                                                                |
-| POST / DELETE        | `/me/tokens`              | アクセストークンの発行と失効                                                                     |
-| POST                 | `/projects/:key/members`  | メンバーの追加（`{email, role}`。既存ユーザーのみ。マネージャーのみ・セッションのみ）           |
+| メソッド             | パス                             | 内容                                                                                                |
+| -------------------- | -------------------------------- | --------------------------------------------------------------------------------------------------- |
+| GET / POST           | `/projects`                      | 一覧、作成                                                                                          |
+| GET / PATCH          | `/projects/:key`                 | 取得、設定変更（PATCHは送った項目だけ変える。名前だけ送っても説明は消えない）                       |
+| GET / POST           | `/projects/:key/issues`          | 検索（`?q=` にフィルタ書式、カーソルページング）、作成                                              |
+| GET / PATCH / DELETE | `/issues/:ref`                   | `:ref` は `WEB-12`                                                                                  |
+| POST                 | `/issues/:ref/move`              | ステータスとrankを同時に変更（ボードのドラッグ）                                                    |
+| GET / POST           | `/issues/:ref/comments`          | コメント                                                                                            |
+| GET                  | `/issues/:ref/activities`        | 変更履歴                                                                                            |
+| POST                 | `/issues/bulk`                   | 一括更新（担当、ステータス、ラベル。変更項目が1つもなければ400。全チケットの権限を先に確かめる）    |
+| GET                  | `/events`                        | SSE。参加プロジェクトの変更を配信                                                                   |
+| POST / DELETE        | `/me/tokens`                     | アクセストークンの発行と失効                                                                        |
+| POST                 | `/projects/:key/members`         | メンバーの追加（`{email, role}`。既存ユーザーのみ。マネージャーのみ・セッションのみ）               |
 | PATCH / DELETE       | `/projects/:key/members/:userId` | ロール変更（`{role}`）、外す。最後のマネージャーは変更も削除も409。マネージャーのみ・セッションのみ |
-| PATCH                | `/projects/:key/statuses/:id` | 状態名の変更（`{name}`のみ。カテゴリと順序は変えない。マネージャーのみ・セッションのみ）       |
+| PATCH                | `/projects/:key/statuses/:id`    | 状態名の変更（`{name}`のみ。カテゴリと順序は変えない。マネージャーのみ・セッションのみ）            |
 
 - 更新は `If-Match`（`updated_at` ベースのETag）で楽観ロック。人とAIが同時に同じチケットを変えても上書きしない。`GET /issues/:ref` が `ETag: "<updatedAtのms>"` を返し、`PATCH` の `If-Match` が一致しなければ **412 Precondition Failed**（`code: "precondition"`）。
 - エラーは RFC 9457（Problem Details）形式（`application/problem+json`: `type` / `title` / `status` / `detail` ＋ `code`）。

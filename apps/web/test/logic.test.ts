@@ -84,6 +84,7 @@ describe("turn badge", () => {
 		id: "i",
 		ref: "WEB-1",
 		number: 1,
+		rank: "a0",
 		title: "x",
 		statusId,
 		priority: null,

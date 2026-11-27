@@ -124,14 +124,18 @@ export function useWriteFailure() {
 }
 
 /** Inline edit from the list: optimistic, rolled back on error, If-Match for field edits. */
-export function useInlineEdit(key: string) {
+export function useInlineEdit(key: string, onFail?: (e: unknown) => void) {
 	const qc = useQueryClient();
-	const fail = useWriteFailure();
+	const writeFail = useWriteFailure();
+	const fail = onFail ?? writeFail;
 	const root = ["issues", key.toUpperCase()];
 	return useMutation({
 		mutationFn: ({ row, patch }: { row: IssueRow; patch: Patch }) =>
 			patch.statusId
-				? api("POST", `/issues/${row.ref}/move`, { statusId: patch.statusId })
+				? api("POST", `/issues/${row.ref}/move`, {
+						statusId: patch.statusId,
+						rank: patch.rank,
+					})
 				: api("PATCH", `/issues/${row.ref}`, patch, {
 						"if-match": etagOf(row.updatedAt),
 					}),

@@ -3,6 +3,7 @@ import type { Page } from "./types";
 
 export type Patch = {
 	statusId?: string;
+	rank?: string;
 	assigneeId?: string | null;
 	priority?: number | null;
 };

@@ -14,8 +14,10 @@ import {
 	List,
 	LogOut,
 	Plus,
+	Search,
 	Settings,
 } from "lucide-react";
+import { useEffect, useState } from "react";
 import { t } from "../i18n";
 import { api } from "../lib/api";
 import {
@@ -25,20 +27,27 @@ import {
 	useProjects,
 	useReviewQueue,
 } from "../lib/queries";
-import { Avatar, cx, IconButton, iconProps, Menu } from "./ui";
+import { CommandPalette } from "./CommandPalette";
+import { Avatar, cx, IconButton, iconProps, Kbd, Menu } from "./ui";
 
 const link =
 	"flex min-h-8 items-center gap-2 rounded-control px-2 text-sm text-ink hover:bg-row-hover pointer-coarse:min-h-11 [&.active]:bg-selection [&.active]:font-medium [&.active]:text-ai-indigo [&.active]:shadow-[inset_2px_0_0_var(--indigo)]";
 
-function Nav({ projectKey }: { projectKey?: string }) {
+function Nav({
+	projectKey,
+	onPalette,
+}: {
+	projectKey?: string;
+	onPalette: () => void;
+}) {
 	const qc = useQueryClient();
 	const nav = useNavigate();
 	const projects = useProjects();
 	const me = useMe();
 	const project = useProject(projectKey ?? "");
 	const queue = useReviewQueue(projectKey ?? "", project.data, me.data);
-	const inReview =
-		(useSearch({ strict: false }) as { view?: string }).view === "review";
+	const view = (useSearch({ strict: false }) as { view?: string }).view;
+	const inView = view === "review" || view === "board";
 	const cur = projects.data?.find((p) => p.key === projectKey);
 	const waiting = queue.items.length;
 	return (
@@ -121,16 +130,18 @@ function Nav({ projectKey }: { projectKey?: string }) {
 							search={{}}
 							className={link}
 							// the list entry is "current" only outside the review view (one aria-current)
-							activeOptions={{ includeSearch: inReview, exact: true }}
+							activeOptions={{ includeSearch: inView, exact: true }}
 							activeProps={{ className: "active" }}
 						>
 							<List {...iconProps} />
 							{t("nav.list")}
 						</Link>
 						<Link
-							to="/p/$key/board"
+							to="/p/$key"
 							params={{ key: projectKey }}
+							search={{ view: "board" }}
 							className={link}
+							activeOptions={{ includeSearch: true }}
 							activeProps={{ className: "active" }}
 						>
 							<Columns3 {...iconProps} />
@@ -138,6 +149,19 @@ function Nav({ projectKey }: { projectKey?: string }) {
 						</Link>
 					</>
 				)}
+				<button
+					type="button"
+					onClick={onPalette}
+					className={cx(link, "w-full text-left")}
+				>
+					<Search {...iconProps} />
+					{t("palette.open")}
+					<span className="ml-auto">
+						<Kbd>
+							{/Mac|iPhone|iPad/.test(navigator.platform) ? "⌘K" : "Ctrl K"}
+						</Kbd>
+					</span>
+				</button>
 				<Link to="/new" className={link} activeProps={{ className: "active" }}>
 					<Plus {...iconProps} />
 					{t("nav.newProject")}
@@ -159,14 +183,30 @@ export function AppLayout() {
 	const me = useMe();
 	const { key } = useParams({ strict: false }) as { key?: string };
 	useLiveUpdates(!!me.data);
+	const [palette, setPalette] = useState(false);
+	useEffect(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (
+				(e.metaKey || e.ctrlKey) &&
+				e.key.toLowerCase() === "k" &&
+				!e.isComposing
+			) {
+				e.preventDefault();
+				setPalette((o) => !o);
+			}
+		};
+		window.addEventListener("keydown", onKey);
+		return () => window.removeEventListener("keydown", onKey);
+	}, []);
 	if (me.isLoading) return null;
 	if (me.isError) return <Navigate to="/login" />;
 	return (
 		<div className="flex h-full flex-col md:flex-row">
-			<Nav projectKey={key} />
+			<Nav projectKey={key} onPalette={() => setPalette(true)} />
 			<main className="min-h-0 min-w-0 flex-1">
 				<Outlet />
 			</main>
+			{palette && <CommandPalette onClose={() => setPalette(false)} />}
 		</div>
 	);
 }

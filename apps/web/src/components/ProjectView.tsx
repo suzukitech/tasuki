@@ -1,6 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { CircleCheck, FilePlus2, Plus, Search, SearchX } from "lucide-react";
+import {
+	CircleCheck,
+	Columns3,
+	FilePlus2,
+	List,
+	Plus,
+	Search,
+	SearchX,
+} from "lucide-react";
 import {
 	type KeyboardEvent,
 	useCallback,
@@ -11,6 +19,7 @@ import {
 } from "react";
 import { t } from "../i18n";
 import { api } from "../lib/api";
+import { moveError } from "../lib/board";
 import { absoluteDate, relativeDue } from "../lib/format";
 import { keyAction } from "../lib/keys";
 import { PRIORITY_KEYS } from "../lib/priority";
@@ -26,6 +35,7 @@ import {
 import { buildCreate, previewQuick } from "../lib/quick";
 import { turnOf } from "../lib/turn";
 import type { IssueRow, Me, ProjectDetail } from "../lib/types";
+import { Board } from "./Board";
 import { IssuePanel } from "./Panel";
 import {
 	Avatar,
@@ -44,9 +54,14 @@ import {
 	Skeleton,
 	StatusDot,
 	TurnBadge,
+	useToast,
 } from "./ui";
 
-export type ListSearch = { issue?: string; q?: string; view?: "review" };
+export type ListSearch = {
+	issue?: string;
+	q?: string;
+	view?: "review" | "board";
+};
 
 type Col = "status" | "assignee" | "priority";
 const COLS = [
@@ -253,14 +268,22 @@ export function ProjectView({
 	const project = useProject(projectKey).data;
 	const q = search.q ?? "";
 	const review = search.view === "review";
+	const board = search.view === "board";
 	const list = useIssues(projectKey, q);
 	const queue = useReviewQueue(projectKey, project, me);
+	const toast = useToast();
 	const edit = useInlineEdit(projectKey);
+	const move = useInlineEdit(projectKey, (e) => toast(moveError(e)));
 	const rows = useMemo(
 		() =>
 			review ? queue.items : (list.data?.pages.flatMap((p) => p.items) ?? []),
 		[review, queue.items, list.data],
 	);
+	// the board shows whole columns: keep loading until the list is complete
+	const { hasNextPage, isFetchingNextPage, fetchNextPage } = list;
+	useEffect(() => {
+		if (board && hasNextPage && !isFetchingNextPage) fetchNextPage();
+	}, [board, hasNextPage, isFetchingNextPage, fetchNextPage]);
 	const [sel, setSel] = useState(-1);
 	const [ai, setAi] = useState(true);
 	const [draft, setDraft] = useState("");
@@ -288,6 +311,7 @@ export function ProjectView({
 				target: e.target as HTMLElement | null,
 			});
 			if (!a) return;
+			if (board && (a === "next" || a === "prev" || a === "open")) return;
 			e.preventDefault();
 			if (a === "create") createRef.current?.focus();
 			else if (a === "search") searchRef.current?.focus();
@@ -298,7 +322,7 @@ export function ProjectView({
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [rows, sel, search.issue, go]);
+	}, [rows, sel, search.issue, go, board]);
 
 	const creating = useRef(false);
 	const onCreate = async (e: KeyboardEvent<HTMLInputElement>) => {
@@ -362,6 +386,33 @@ export function ProjectView({
 							)}
 						</h1>
 						{!review && (
+							<fieldset className="m-0 flex min-w-0 rounded-control border-0 bg-paper p-0.5">
+								<legend className="sr-only">{t("view.switch")}</legend>
+								{(
+									[
+										[false, List, "nav.list"],
+										[true, Columns3, "nav.board"],
+									] as const
+								).map(([b, Icon, k]) => (
+									<button
+										key={k}
+										type="button"
+										aria-pressed={board === b}
+										onClick={() => go({ view: b ? "board" : undefined })}
+										className={cx(
+											"inline-flex items-center gap-1.5 rounded-[5px] px-2.5 text-xs leading-6 whitespace-nowrap pointer-coarse:min-h-10",
+											board === b
+												? "bg-surface font-medium text-ink shadow-[0_0_0_1px_var(--line-strong)]"
+												: "text-nezumi hover:text-ink",
+										)}
+									>
+										<Icon {...iconProps} />
+										{t(k)}
+									</button>
+								))}
+							</fieldset>
+						)}
+						{!review && (
 							<div className="relative w-72 max-md:w-full">
 								<Search
 									{...iconProps}
@@ -416,6 +467,7 @@ export function ProjectView({
 							<Plus {...iconProps} className="shrink-0 text-nezumi" />
 							<input
 								ref={createRef}
+								data-quick-create
 								aria-label={t("list.create.placeholder")}
 								placeholder={t("list.create.placeholder")}
 								value={draft}
@@ -452,7 +504,15 @@ export function ProjectView({
 						)}
 					</div>
 				</div>
-				<div className="@container min-h-0 flex-1 overflow-auto px-5 pb-6 max-md:px-3">
+				<div
+					className={cx(
+						"@container min-h-0 flex-1 px-5 max-md:px-3",
+						// the board scrolls sideways inside this frame only; the page never does
+						board && !loading && rows.length > 0
+							? "overflow-x-auto overflow-y-hidden pb-4"
+							: "overflow-auto pb-6",
+					)}
+				>
 					{loading ? (
 						<SkeletonRows />
 					) : error && rows.length === 0 ? (
@@ -498,6 +558,15 @@ export function ProjectView({
 								{t("list.empty")}
 							</EmptyState>
 						)
+					) : board ? (
+						<Board
+							project={project}
+							me={me}
+							rows={rows}
+							openRef={search.issue}
+							onOpen={(ref) => go({ issue: ref })}
+							onMove={(row, to) => move.mutate({ row, patch: to })}
+						/>
 					) : (
 						<table className="w-full border-collapse text-sm max-md:block">
 							<thead className="max-md:hidden">
@@ -538,7 +607,7 @@ export function ProjectView({
 					{review && queue.truncated && (
 						<p className="mt-3 text-xs text-nezumi">{t("review.truncated")}</p>
 					)}
-					{!review && list.hasNextPage && (
+					{!review && !board && list.hasNextPage && (
 						<Button
 							className="mt-3"
 							onClick={() => list.fetchNextPage()}
@@ -547,7 +616,12 @@ export function ProjectView({
 							{t("list.more")}
 						</Button>
 					)}
-					<p className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-nezumi max-md:hidden pointer-coarse:hidden">
+					<p
+						className={cx(
+							"mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-nezumi max-md:hidden pointer-coarse:hidden",
+							board && "hidden",
+						)}
+					>
 						{(
 							[
 								[["C"], "key.create"],
