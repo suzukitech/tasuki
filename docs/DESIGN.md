@@ -238,7 +238,7 @@ tasuki/
 | activities             | id, issue\_id, actor\_id, via, action, field, before, after, created\_at                                                                                                                               | 全変更の監査履歴                                                             |
 | api\_tokens            | id, user\_id, name, token\_hash, scopes, project\_ids, last\_used\_at, expires\_at, revoked\_at                                                                                                        | MCPとCLI用。project\_idsで操作できるプロジェクトを制限（nullなら全体）       |
 | saved\_views           | id, project\_id, owner\_id, name, query, layout(list/board), shared                                                                                                                                    | v0.2                                                                         |
-| attachments            | id, issue\_id, filename, size, path, uploaded\_by                                                                                                                                                      | ローカルディスク保存。v0.2                                                   |
+| attachments            | id, issue\_id, filename, size, content\_type, path, uploaded\_by                                                                                                                                      | ローカルディスク保存（画像のみ。v0.1。詳細は「Phase 6b-2」）                 |
 | sessions               | id, user\_id, token\_hash, expires\_at                                                                                                                                                                 | Web UIのログインセッション（HttpOnly Cookie）                                |
 | invites                | id, token\_hash, expires\_at, used\_at, created\_by                                                                                                                                                    | 招待リンクとパスワード再設定リンク（有効期限7日）                            |
 
@@ -622,10 +622,49 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 
 - **ボード**: プロジェクト画面は `?view=board` でリスト/ボードを切り替える（サイドバーの「ボード」も同じURL）。状態ごとに1列（`position` 順）、列の中は `rank`（fractional-indexing のキー。文字列の単純比較で並ぶ）の昇順。ドロップは `POST /issues/:ref/move` に `{statusId, rank}` を送る。`rank` は落とした位置の前後のカードのキーから `generateKeyBetween` で作る。人間ゲートの規則はサーバーが守る（ゲートを越える移動は409、不正は400）ので、Webは楽観的に動かし、失敗したら元に戻して、何が起きたかとどうすればよいかを平易な日本語でトーストに出す。人間ゲートの列（`plan_review` / `impl_review`）の見出しだけに襷を置く（襷の2つ目の置き場所）。カードは番号、タイトル、誰の番バッジ、担当アバター、優先度、期日。クリックで `?issue=` のパネルを開く。ドラッグはマウス・タッチ・キーボード（スペースで持ち上げ、矢印で移動、スペースで落とす）。狭い画面では横スクロールをボードの枠の中だけに閉じ込める。一覧と同じ検索（`?q=`）を使い、全ページを読み込む。
 - **コマンドパレット**: `Cmd+K` / `Ctrl+K`（サイドバーの「コマンド」ボタンからも）。`role=dialog` の中に `combobox` と `listbox`（`aria-activedescendant`）。入力は部分一致で絞り込む。項目は、画面の移動（レビューキュー、各プロジェクトのリストとボード、設定）、チケットを作る、チケット検索（`WEB-12` の形ならそのチケットを開く。それ以外はテキストでプロジェクト内を検索して結果を並べる）、パネルを開いているときは、そのチケットの状態変更（`move`。ゲートはサーバーが守る）。IME変換中のEnterは実行しない。Escで閉じ、閉じたら元の場所にフォーカスを戻す。
-- **設定**: `/settings`。個人（アクセストークン）とプロジェクト（基本情報、メンバー、招待、状態名）。トークンの平文と `claudeMcpAdd` は発行直後の1回だけ表示し、その旨を明記する。失効は画面内の確認（`window.confirm` は使わない）。テンプレートはv0.1後半に回す。招待リンクの発行は管理者のみ。メンバー・状態名の変更はマネージャーのみで、ロールや権限に関わるのでセッションのみ（トークンは409 `gate`）。
+- **設定**: `/settings`。個人（アクセストークン）とプロジェクト（基本情報、メンバー、招待、状態名）。トークンの平文と `claudeMcpAdd` は発行直後の1回だけ表示し、その旨を明記する。失効は画面内の確認（`window.confirm` は使わない）。テンプレートはPhase 6b-2で入れた（下記）。招待リンクの発行は管理者のみ。メンバー・状態名の変更はマネージャーのみで、ロールや権限に関わるのでセッションのみ（トークンは409 `gate`）。
 - **エラー文言（Web全体）**: 書き込みの失敗はすべて `lib/etag.ts` の `writeError`（`useWriteFailure`）を通す。サーバーの `message` は英語でAPIクライアント向けなので画面に出さない。既知の拒否（確認状態への直接移動、確認状態からの直接移動、承認済みの計画なし、トークンでは不可、順序違反、権限なし）は日本語に書き直し、未知のものは一般文にする（サーバーの詳細は日本語のときだけ添える）。計画確認・結果確認へ動かそうとして断られたときは「計画確認へは、計画を提出すると進みます。ここへは直接動かせません」のように、行き先ごとに案内する。412は最新を読み直す。ボードのドロップ・一覧の状態変更・コマンドパレットの状態変更は同じ `useInlineEdit`（楽観更新と巻き戻し）を使う。
 - **ボードの読み込み**: ボードは1ページ200件で全ページを読み、読み込みが終わるまでカードを動かせない（途中の列に対して順位を計算しないため）。ページの取得に失敗したら読み込みを止め、再読み込みのボタンを出す。同じ順位のカードの間に置いて順位を作れないときは列の末尾に置き、その旨をトーストで伝える。キーボードでドラッグ中のEscはドラッグの取り消しだけを行い、パネルは閉じない。
 - **プロジェクトの文脈**: `/settings` のようにURLにプロジェクトがない画面は、最後に開いたプロジェクト（localStorage。使えなくても動く）、なければ先頭のプロジェクトを現在のプロジェクトとして扱う。コマンドパレットの状態変更は、開いているチケット自身のプロジェクトの状態を使う。メンバーの変更・削除のあとは `["projects"]` も読み直す。
 - **プロジェクトのイベント**: 状態名の変更は `project.updated`（`ref` はプロジェクトキー）をSSEで流す。Webは受け取ると `["project", キー]` と一覧・チケットを読み直す。配信は他のイベントと同じくプロジェクトの閲覧権限で絞る。
 - **旧URL**: `/p/KEY/board` は `/p/KEY?view=board` へ移す。存在しないURLは「ページが見つかりません」と、トップへ戻るリンクを出す。
 - **切替ボタン（Segmented）**: リスト/ボードの切替と「AIに任せる/人がやる」は共通の `Segmented`。タッチ端末では高さ44px以上。
+
+## Phase 6b-2: 通知・Webhook・添付・エディタ・テンプレート
+
+### アプリ内通知
+
+- 「誰かの番になった」瞬間に `notifications` へ1行入れる（`kind`: `plan_submitted` / `report_submitted` / `question_asked` / `question_answered` / `assigned`）。宛先は `reviewerOf`（承認者、なければ依頼者）が計画提出・結果提出・質問、担当者が回答、新しい担当者が割り当て（作成時を含む）。**操作した本人には送らない**。AIの番（担当者がAIの作業中）には送らない。
+- 行の追加は変更と同じトランザクション内（`atomic`）で行い、コミット後にだけ、ユーザー宛てのイベント `notification.created`（`userId` を持つ）を `ctx.emit` へ流す。SSEは `userId` を持つイベントを、そのユーザーの購読にだけ配信する（プロジェクト権限のキャッシュを通さず、宛先の本人確認だけ。他人のストリームには決して出さない）。Webは受け取ると通知一覧を読み直す。
+- REST: `GET /me/notifications?limit=`（未読が先、その中は新しい順。応答は `{items, unread}`。`items` は `{id, kind, ref, title, readAt, createdAt}`）、`POST /me/notifications/read`（`{ids}` または `{all: true}`。自分の通知だけが対象）。トークンも自分の通知は読める（読み取りスコープ）。既読にするのは書き込みスコープ。
+- UI: サイドバーにベル（未読数のバッジ）。ポップオーバーに相対時刻、チケット番号、タイトル、日本語の理由（例: 「計画が提出されました」）を並べ、クリックで `?issue=` のパネルを開いて既読にする。「すべて既読にする」あり。チケットが削除されたら通知も消える（外部キーのカスケード）。
+
+### Slack形式のWebhook
+
+- プロジェクト管理者が設定する（セッションのみ。URLは秘密なのでトークンでは触れない）。`GET/POST /projects/:key/webhooks`、`DELETE /projects/:key/webhooks/:id`、`POST /projects/:key/webhooks/:id/test`。
+- 通知する出来事は固定の6つから選ぶ: `plan.submitted` / `report.submitted` / `question.asked` / `question.answered` / `issue.assigned` / `issue.completed`。`issue.assigned` は担当者が変わったときに足した新しいイベント種別。
+- 本文は Slack 互換の `{text}`（Discord は URL の末尾に `/slack` を付ければ受けられる）。日本語で、チケット番号、タイトル、何が起きたか、リンク（`TASUKI_BASE_URL`）を入れる。`& < >` はエスケープする。
+- 送信はコミット後に非同期（`ctx.emit` の後ろで走り、リクエストを待たせず、失敗させない）。`fetch` は5秒のタイムアウト（`AbortSignal.timeout`）、`redirect: "manual"`（3xxは失敗扱い）、リトライはネットワークエラーと5xxに1回だけ。失敗のログはWebhookのIDだけで、**URLは決して出さない**（秘密のため）。
+- SSRF対策: スキームは http / https のみ。送信のたびにホスト名を解決（`dns.lookup`）し、**全アドレス**がループバック・プライベート・リンクローカル・CGNAT・メタデータ（169.254.0.0/16）・ユニークローカル（fc00::/7）・IPv4射影（`::ffff:`）でないことを確かめる。1つでも該当すれば送らない。自前のMattermostなど社内向けは `TASUKI_WEBHOOK_ALLOW_PRIVATE=1` で許す。トレードオフ（上限）: 検査と `fetch` の間で名前の再解決が起きるので、DNSリバインディングの隙は残る。接続先IPの固定は、TLSの検証と両立させるのが面倒なのでしていない。リダイレクトを追わないので、ホスト名が正当でも他へ飛ばされる経路はない。
+- URLは作成後は返さない。一覧は `https://host/…末尾4文字` に伏せたものだけ。作成時の応答も伏せたものを返す。入力したのは本人だから困らない。
+- 設定画面: プロジェクトの設定に「Webhook」を置く。追加（URL＋出来事のチェック）、テスト送信（結果を日本語で表示）、削除（画面内の確認）。テスト送信は成功、拒否（アドレス）、タイムアウト、相手の応答エラーを区別して返す。
+
+### 添付ファイルと画像の貼り付け
+
+- `POST /issues/:ref/attachments`: ボディは画像のバイト列そのもの（`Content-Type: image/png|jpeg|gif|webp`）、ファイル名は `?filename=`。multipart は使わない（解析が要らず、Bun/Honoで最も単純）。CSRFの規則は保つ: この経路だけ `Content-Type` が上記の画像型でもよい（他サイトのフォームは `image/*` を単純リクエストで送れず、`fetch` なら事前確認で止まる）。セッションなら `X-Tasuki-CSRF` も必須。書き込みスコープのトークンも使える（AIの証拠スクリーンショット）。MCPのツールは今回は入れない。
+- 受け入れは png / jpeg / gif / webp のみ。**先頭のバイト列（マジックバイト）で判定**し、`Content-Type` は信用しない（判定結果を保存する）。上限は10 MB。権限確認を本文を読む前に行い、`Content-Length` が上限を超えれば読まずに413、ないときも読みながら数えて超えた時点で打ち切る。全体の1 MBの上限はこの経路だけ外す。
+- 保存先は `<TASUKI_DATA>/attachments/<uuidv7>`（利用者のファイル名はパスに使わない）。表示用のファイル名はDBにだけ置く（制御文字・パス区切りを除き100字まで）。
+- `GET /attachments/:id`: チケットのプロジェクトの閲覧権限を確かめ、保存した型で返す。`X-Content-Type-Options: nosniff`、`Content-Disposition: inline; filename*=UTF-8''...`、`Cache-Control: private`、`Content-Security-Policy: default-src 'none'`。チケットを削除したらファイルも消す。
+- UI: 本文・コメントの入力欄に画像を貼る、またはドロップするとアップロードし、`![name](/api/v1/attachments/<id>)` を挿入する。アップロード中は表示を出し、大きすぎる・形式が違うは日本語で伝える。
+
+### エディタ（Tiptapをやめた判断）
+
+- Tiptap（`@tiptap/react` + `starter-kit` + `extension-image` + `tiptap-markdown`）をバンドルに足すと、minify + gzip で約190 kB増える（Reactを除く。測定: 2026-11-27）。目安の150 kBを超え、現状のJSの総量（約150 kB gzip）の倍以上になるため採らない。
+- 代わりに、**Markdownのテキスト欄＋プレビューの切替＋画像の貼り付け・ドロップ**にする。保存は今までどおりMarkdown。Tiptap（見たまま編集）はv0.2以降で、遅延読み込みの別チャンクとして再検討する。
+- 表示側のMarkdownは自前の小さな変換（`lib/markdown.tsx`）でReact要素に直接変える。生のHTMLは解釈せず文字として出す。リンクは `http(s)` のみ（`safeUrl`）、画像は `/api/v1/attachments/` か `https` のみ。対応は見出し、段落、強調、インラインコード、コードブロック、箇条書き、引用、リンク、画像。
+
+### テンプレート
+
+- `issue_templates`（名前、種別、本文の型、条件の型）をプロジェクト管理者がCRUDする（`GET/POST /projects/:key/templates`、`PATCH/DELETE /projects/:key/templates/:id`。管理者のみ、セッションのみ。一覧はメンバーも読める）。種別は任意。
+- 新規作成とクイック作成から、テンプレートを選ぶと本文（と受け入れ条件の案は空欄のヒントとして本文に足さず、今回は本文だけ）を埋める。強制はしない。
+

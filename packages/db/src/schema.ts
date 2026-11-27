@@ -425,6 +425,8 @@ export const attachments = sqliteTable(
 		issueId: issueRef(),
 		filename: text("filename").notNull(),
 		size: integer("size").notNull(),
+		/** sniffed from the bytes at upload, never taken from the client */
+		contentType: text("content_type").notNull().default("image/png"),
 		path: text("path").notNull(),
 		uploadedBy: text("uploaded_by").references(() => users.id),
 		createdAt: createdAt(),

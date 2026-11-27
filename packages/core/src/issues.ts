@@ -1,6 +1,7 @@
 import {
 	acceptanceCriteria,
 	activities,
+	attachments,
 	type Category,
 	comments,
 	type Issue,
@@ -30,6 +31,7 @@ import {
 	parse,
 	record,
 } from "./ctx";
+import { notify } from "./notifications";
 import { type Role, requireProjectRole, requireSession } from "./permissions";
 import { getProject } from "./projects";
 import { TRANSITIONS } from "./transitions";
@@ -292,6 +294,10 @@ export function createIssue(ctx: Ctx, projectKey: string, input: unknown) {
 		log(c, issue.id, "created");
 		const ref = refOf(project.key, issue.number);
 		record(c, "issue.created", project.id, ref);
+		if (issue.assigneeId) {
+			record(c, "issue.assigned", project.id, ref);
+			notify(c, { issue, project, ref }, "assigned", issue.assigneeId);
+		}
 		return { ...issue, ref };
 	});
 }
@@ -415,16 +421,28 @@ export function updateIssue(
 		}
 		logAll(c, issue.id, acts);
 		if (Object.keys(set).length) record(c, "issue.updated", project.id, l.ref);
+		if ("assigneeId" in set && inp.assigneeId) {
+			record(c, "issue.assigned", project.id, l.ref);
+			notify(c, l, "assigned", inp.assigneeId);
+		}
 		const row = Object.keys(set).length ? patchIssue(c, issue.id, set) : issue;
 		return { ...row, ref: l.ref };
 	});
 }
 
+/** Deletes the issue; returns its attachment paths so the caller can remove the files. */
 export function deleteIssue(ctx: Ctx, ref: string) {
-	atomic(ctx, (c) => {
+	return atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "manager");
+		const paths = c.db
+			.select({ path: attachments.path })
+			.from(attachments)
+			.where(eq(attachments.issueId, l.issue.id))
+			.all()
+			.map((r) => r.path);
 		c.db.delete(issues).where(eq(issues.id, l.issue.id)).run();
 		record(c, "issue.deleted", l.project.id, l.ref);
+		return paths;
 	});
 }
 

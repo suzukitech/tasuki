@@ -19,6 +19,7 @@ import {
 	noteInput,
 	planInput,
 	reportInput,
+	reviewerOf,
 } from "@tasuki/schema";
 import {
 	and,
@@ -50,6 +51,7 @@ import {
 	patchIssue,
 	updateIssue,
 } from "./issues";
+import { notify } from "./notifications";
 import {
 	requireProjectRole,
 	requireScope,
@@ -194,6 +196,7 @@ export function submitPlan(ctx: Ctx, ref: string, input: unknown) {
 		transition(c, l, "plan_review", "submitPlan");
 		log(c, l.issue.id, "plan_submitted", "plan", null, `v${plan.version}`);
 		announce(c, l, "plan.submitted");
+		notify(c, l, "plan_submitted", reviewerOf(l.issue));
 		return { plan, reviewUrl: reviewUrl(l.ref, "plan") };
 	});
 }
@@ -496,6 +499,7 @@ export function askQuestion(ctx: Ctx, ref: string, bodyMd: string) {
 			.get();
 		log(c, l.issue.id, "question_asked");
 		announce(c, l, "question.asked");
+		notify(c, l, "question_asked", reviewerOf(l.issue));
 		return q;
 	});
 }
@@ -526,6 +530,7 @@ export function answerQuestion(ctx: Ctx, questionId: string, answerMd: string) {
 			.get();
 		log(c, q.issueId, "question_answered");
 		announce(c, l, "question.answered");
+		notify(c, l, "question_answered", l.issue.assigneeId ?? q.askedBy);
 		return done;
 	});
 }
@@ -696,6 +701,7 @@ export function submitReport(ctx: Ctx, ref: string, input: unknown) {
 		transition(c, l, "impl_review", "submitReport");
 		log(c, l.issue.id, "report_submitted");
 		announce(c, l, "report.submitted");
+		notify(c, l, "report_submitted", reviewerOf(l.issue));
 		return { report, reviewUrl: reviewUrl(l.ref, "report") };
 	});
 }
@@ -777,8 +783,10 @@ export function moveIssue(
 		const target = statusIn(c, l, input.statusId);
 		const opts = { target, rank: input.rank };
 		announce(c, l, "issue.moved");
-		if (target.category === "done" && l.category !== "done")
+		if (target.category === "done" && l.category !== "done") {
+			announce(c, l, "issue.completed");
 			return complete(c, l, "move", opts);
+		}
 		transition(c, l, target.category, "move", opts);
 		if (l.category === "in_progress" && target.category !== l.category)
 			endSessions(c, l.issue.id, "moved");
@@ -800,6 +808,11 @@ export function bulkUpdate(ctx: Ctx, input: unknown) {
 			if (Object.keys(edit).length) updateIssue(inner, ref, edit);
 			if (statusId) moveIssue(inner, ref, { statusId });
 		}
+		// user-scoped and webhook events pass through; the rest collapse to one update per issue
+		const pass = ["notification.created", "issue.assigned", "issue.completed"];
+		for (const e of inner.pending ?? [])
+			if (pass.includes(e.type))
+				record(c, e.type, e.projectId, e.ref, e.userId);
 		for (const e of new Map(
 			(inner.pending ?? []).map((e) => [e.ref, e]),
 		).values())

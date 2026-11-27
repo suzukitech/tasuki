@@ -29,8 +29,39 @@ export const EVENT_TYPES = [
 	"question.asked",
 	"question.answered",
 	"project.updated",
+	"issue.assigned",
+	"notification.created",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
+
+/** Why a notification exists: whose turn it just became. */
+export const NOTIFICATION_KINDS = [
+	"plan_submitted",
+	"report_submitted",
+	"question_asked",
+	"question_answered",
+	"assigned",
+] as const;
+export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
+
+/** The fixed list a project webhook can subscribe to. */
+export const WEBHOOK_EVENTS = [
+	"plan.submitted",
+	"report.submitted",
+	"question.asked",
+	"question.answered",
+	"issue.assigned",
+	"issue.completed",
+] as const;
+export type WebhookEvent = (typeof WEBHOOK_EVENTS)[number];
+
+export const ATTACHMENT_MAX = 10 * 1024 * 1024;
+export const ATTACHMENT_TYPES = [
+	"image/png",
+	"image/jpeg",
+	"image/gif",
+	"image/webp",
+] as const;
 
 export const PRIORITIES = {
 	none: 0,

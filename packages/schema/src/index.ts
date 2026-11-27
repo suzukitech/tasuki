@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { KEY_RE, PRIORITY_MAX } from "./pure";
+import { KEY_RE, PRIORITY_MAX, WEBHOOK_EVENTS } from "./pure";
 
 export * from "./pure";
 
@@ -148,3 +148,30 @@ export const listQuery = z.object({
 	),
 	limit: z.coerce.number().int().min(1).max(200).optional(),
 });
+
+export const webhookInput = z.object({
+	url: z
+		.string()
+		.trim()
+		.max(500)
+		.refine((u) => {
+			try {
+				return ["http:", "https:"].includes(new URL(u).protocol);
+			} catch {
+				return false;
+			}
+		}, "url must be http(s)"),
+	events: z.array(z.enum(WEBHOOK_EVENTS)).min(1),
+});
+
+export const notificationReadInput = z.union([
+	z.object({ all: z.literal(true) }),
+	z.object({ ids: z.array(z.string()).min(1).max(200) }),
+]);
+
+export const templateInput = z.object({
+	name: z.string().trim().min(1).max(100),
+	typeId: z.string().nullish(),
+	bodyTemplateMd: md(50000).default(""),
+});
+export const templatePatch = templateInput.partial();

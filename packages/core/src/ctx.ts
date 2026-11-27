@@ -12,7 +12,13 @@ export type Actor = {
 		projectIds: string[] | null;
 	};
 };
-export type IssueEvent = { type: EventType; projectId: string; ref: string };
+export type IssueEvent = {
+	type: EventType;
+	projectId: string;
+	ref: string;
+	/** user-scoped event: only this user's stream receives it */
+	userId?: string;
+};
 export type Ctx = {
 	db: Conn;
 	actor: Actor;
@@ -70,7 +76,11 @@ export const record = (
 	type: EventType,
 	projectId: string,
 	ref: string,
-) => void c.pending?.push({ type, projectId, ref });
+	userId?: string,
+) =>
+	void c.pending?.push(
+		userId ? { type, projectId, ref, userId } : { type, projectId, ref },
+	);
 
 export function parse<T extends z.ZodType>(
 	schema: T,
