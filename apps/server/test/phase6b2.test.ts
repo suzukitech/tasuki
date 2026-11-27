@@ -457,7 +457,7 @@ describe("webhook delivery is pinned to the checked address", () => {
 				).json();
 				return (await (
 					await a.req("POST", `/projects/WEB/webhooks/${hook.id}/test`)
-				).json()) as { ok: boolean };
+				).json()) as { ok: boolean; reason?: string };
 			};
 			expect(await run("hook.example.test")).toEqual({ ok: true });
 			expect(got).toEqual([`hook.example.test:${srv.port}`]);
