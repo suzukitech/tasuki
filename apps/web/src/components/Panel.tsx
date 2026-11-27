@@ -166,7 +166,7 @@ function RequestTab({
 	const save = (patch: Record<string, unknown>, onSuccess?: () => void) =>
 		act.mutate(
 			() =>
-				api("PATCH", `/issues/${d.ref}`, patch, {
+				api("PATCH", `/issues/${encodeURIComponent(d.ref)}`, patch, {
 					"if-match": etagOf(i.updatedAt),
 				}),
 			{ onSuccess },
@@ -288,7 +288,12 @@ function RequestTab({
 					disabled={act.isPending}
 					onClick={() =>
 						act.mutate(
-							() => api("PUT", `/issues/${d.ref}/criteria`, criteriaBody(crit)),
+							() =>
+								api(
+									"PUT",
+									`/issues/${encodeURIComponent(d.ref)}/criteria`,
+									criteriaBody(crit),
+								),
 							// the refetched criteria (with their ids) replace the draft: a second save keeps the ids
 							{
 								onSuccess: () =>
@@ -316,7 +321,9 @@ function Gate(p: {
 	const [open, setOpen] = useState(false);
 	const [note, setNote] = useState("");
 	const post = (path: string, body?: unknown) =>
-		act.mutate(() => api("POST", `/issues/${p.issueRef}${path}`, body));
+		act.mutate(() =>
+			api("POST", `/issues/${encodeURIComponent(p.issueRef)}${path}`, body),
+		);
 	return (
 		<footer className="border-t border-line bg-surface px-4 py-3">
 			{open && (
@@ -644,7 +651,9 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 						busy={act.isPending}
 						onSubmit={(id, answerMd) =>
 							act.mutate(() =>
-								api("POST", `/questions/${id}/answer`, { answerMd }),
+								api("POST", `/questions/${encodeURIComponent(id)}/answer`, {
+									answerMd,
+								}),
 							)
 						}
 					/>
@@ -720,7 +729,7 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 					onClick={() =>
 						act.mutate(
 							() =>
-								api("POST", `/issues/${d.ref}/comments`, {
+								api("POST", `/issues/${encodeURIComponent(d.ref)}/comments`, {
 									bodyMd: text.trim(),
 								}),
 							// keep the text if the post fails

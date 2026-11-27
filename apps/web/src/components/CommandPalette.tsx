@@ -64,7 +64,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 		queryFn: () =>
 			api<Page>(
 				"GET",
-				`/projects/${projectKey}/issues?${new URLSearchParams({ q: text, limit: "10" })}`,
+				`/projects/${encodeURIComponent(projectKey ?? "")}/issues?${new URLSearchParams({ q: text, limit: "10" })}`,
 			),
 		enabled: searching,
 	});
@@ -168,9 +168,13 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 						keywords: `${openRef} status move`,
 						run: async () => {
 							try {
-								await api("POST", `/issues/${openRef}/move`, {
-									statusId: s.id,
-								});
+								await api(
+									"POST",
+									`/issues/${encodeURIComponent(openRef)}/move`,
+									{
+										statusId: s.id,
+									},
+								);
 							} catch (e) {
 								toast(moveError(e));
 							}

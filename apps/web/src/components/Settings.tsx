@@ -251,7 +251,7 @@ function Tokens() {
 					))}
 				</fieldset>
 				<div className="mb-4 flex flex-wrap items-end gap-4">
-					<div>
+					<div className="mb-4">
 						<span className="mb-1 block text-sm font-medium">
 							{t("tokens.project")}
 						</span>
@@ -339,7 +339,11 @@ function Tokens() {
 												yes={t("tokens.revoke.yes")}
 												onYes={() =>
 													run(
-														() => api("DELETE", `/me/tokens/${row.id}`),
+														() =>
+															api(
+																"DELETE",
+																`/me/tokens/${encodeURIComponent(row.id)}`,
+															),
 														t("tokens.revoked"),
 														[tokensKey],
 													)
@@ -381,7 +385,12 @@ function Basics({
 				e.preventDefault();
 				if (dirty)
 					await run(
-						() => api("PATCH", `/projects/${project.key}`, patch),
+						() =>
+							api(
+								"PATCH",
+								`/projects/${encodeURIComponent(project.key)}`,
+								patch,
+							),
 						t("settings.saved"),
 						[["project", project.key], ["projects"]],
 					);
@@ -451,7 +460,7 @@ function Members({
 											() =>
 												api(
 													"PATCH",
-													`/projects/${project.key}/members/${m.id}`,
+													`/projects/${encodeURIComponent(project.key)}/members/${encodeURIComponent(m.id)}`,
 													{ role: r },
 												),
 											t("settings.saved"),
@@ -470,7 +479,7 @@ function Members({
 											() =>
 												api(
 													"DELETE",
-													`/projects/${project.key}/members/${m.id}`,
+													`/projects/${encodeURIComponent(project.key)}/members/${encodeURIComponent(m.id)}`,
 												),
 											t("project.member.removed"),
 											refetch,
@@ -492,10 +501,14 @@ function Members({
 						if (
 							await run(
 								() =>
-									api("POST", `/projects/${project.key}/members`, {
-										email,
-										role,
-									}),
+									api(
+										"POST",
+										`/projects/${encodeURIComponent(project.key)}/members`,
+										{
+											email,
+											role,
+										},
+									),
 								t("project.member.added"),
 								refetch,
 							)
@@ -588,9 +601,13 @@ function StatusRow({
 				if (dirty)
 					await run(
 						() =>
-							api("PATCH", `/projects/${project.key}/statuses/${status.id}`, {
-								name: name.trim(),
-							}),
+							api(
+								"PATCH",
+								`/projects/${encodeURIComponent(project.key)}/statuses/${encodeURIComponent(status.id)}`,
+								{
+									name: name.trim(),
+								},
+							),
 						t("settings.saved"),
 						[["project", project.key], ["issue"]],
 					);

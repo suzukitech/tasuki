@@ -37,13 +37,14 @@ export const useProjects = () =>
 export const useProject = (key: string) =>
 	useQuery({
 		queryKey: ["project", key.toUpperCase()],
-		queryFn: () => api<ProjectDetail>("GET", `/projects/${key}`),
+		queryFn: () =>
+			api<ProjectDetail>("GET", `/projects/${encodeURIComponent(key)}`),
 		enabled: !!key,
 	});
 
 export const issueQuery = (ref: string) => ({
 	queryKey: ["issue", ref],
-	queryFn: () => api<IssueDetail>("GET", `/issues/${ref}`),
+	queryFn: () => api<IssueDetail>("GET", `/issues/${encodeURIComponent(ref)}`),
 });
 export const useIssue = (ref: string) => useQuery(issueQuery(ref));
 
@@ -54,7 +55,10 @@ export function useIssues(key: string, q: string) {
 		queryFn: ({ pageParam }) => {
 			const p = new URLSearchParams({ q, limit: "50" });
 			if (pageParam) p.set("cursor", String(pageParam));
-			return api<Page>("GET", `/projects/${key}/issues?${p}`);
+			return api<Page>(
+				"GET",
+				`/projects/${encodeURIComponent(key)}/issues?${p}`,
+			);
 		},
 		getNextPageParam: (last) => last.nextCursor ?? undefined,
 		enabled: !!key,
@@ -77,7 +81,10 @@ export function useReviewQueue(key: string, project?: ProjectDetail, me?: Me) {
 		queries: REVIEW_QUERIES.map((s) => ({
 			queryKey: ["review", key.toUpperCase(), s],
 			queryFn: () =>
-				api<Page>("GET", `/projects/${key}/issues?q=${s}&limit=200`),
+				api<Page>(
+					"GET",
+					`/projects/${encodeURIComponent(key)}/issues?q=${s}&limit=200`,
+				),
 			enabled: !!key,
 		})),
 	});
@@ -132,11 +139,11 @@ export function useInlineEdit(key: string, onFail?: (e: unknown) => void) {
 	return useMutation({
 		mutationFn: ({ row, patch }: { row: IssueRow; patch: Patch }) =>
 			patch.statusId
-				? api("POST", `/issues/${row.ref}/move`, {
+				? api("POST", `/issues/${encodeURIComponent(row.ref)}/move`, {
 						statusId: patch.statusId,
 						rank: patch.rank,
 					})
-				: api("PATCH", `/issues/${row.ref}`, patch, {
+				: api("PATCH", `/issues/${encodeURIComponent(row.ref)}`, patch, {
 						"if-match": etagOf(row.updatedAt),
 					}),
 		onMutate: async ({ row, patch }) => {

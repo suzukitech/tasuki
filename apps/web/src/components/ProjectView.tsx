@@ -335,7 +335,11 @@ export function ProjectView({
 		const sent = draft;
 		setDraft(""); // cleared before the await; restored on failure
 		try {
-			await api("POST", `/projects/${projectKey}/issues`, body);
+			await api(
+				"POST",
+				`/projects/${encodeURIComponent(projectKey)}/issues`,
+				body,
+			);
 			qc.invalidateQueries({ queryKey: ["issues", projectKey] });
 		} catch (x) {
 			setDraft((now) => now || sent);
@@ -506,7 +510,7 @@ export function ProjectView({
 				</div>
 				<div
 					className={cx(
-						"@container min-h-0 flex-1 px-5 max-md:px-3",
+						"@container relative min-h-0 flex-1 px-5 max-md:px-3",
 						// the board scrolls sideways inside this frame only; the page never does
 						board && !loading && rows.length > 0
 							? "overflow-x-auto overflow-y-hidden pb-4"

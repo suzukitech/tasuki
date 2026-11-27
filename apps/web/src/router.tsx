@@ -7,6 +7,7 @@ import {
 	useParams,
 	useSearch,
 } from "@tanstack/react-router";
+import { isIssueRef, isProjectKey } from "@tasuki/schema/pure";
 import { InvitePage, LoginPage, SetupPage } from "./components/AuthPages";
 import { NewProject } from "./components/NewProject";
 import { type ListSearch, ProjectView } from "./components/ProjectView";
@@ -56,7 +57,7 @@ const list = createRoute({
 	getParentRoute: () => app,
 	path: "/p/$key",
 	validateSearch: (s: Record<string, unknown>): ListSearch => ({
-		issue: typeof s.issue === "string" ? s.issue : undefined,
+		issue: isIssueRef(s.issue) ? s.issue : undefined,
 		q: typeof s.q === "string" && s.q ? s.q : undefined,
 		view: s.view === "review" || s.view === "board" ? s.view : undefined,
 	}),
@@ -76,7 +77,7 @@ const settings = createRoute({
 	path: "/settings",
 	validateSearch: (s: Record<string, unknown>): SettingsSearch => ({
 		section: s.section === "project" ? "project" : undefined,
-		project: typeof s.project === "string" && s.project ? s.project : undefined,
+		project: isProjectKey(s.project) ? s.project : undefined,
 	}),
 	component: function Settings() {
 		return <SettingsPage search={useSearch({ from: "/app/settings" })} />;

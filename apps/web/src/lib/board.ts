@@ -35,6 +35,7 @@ export function planDrop(
 	activeId: string,
 	overId: string,
 ): { statusId: string; rank?: string } | null {
+	if (activeId === overId) return null;
 	let from: string | undefined;
 	let target: string | undefined;
 	let at = -1; // insertion index in the target column without the moved card
