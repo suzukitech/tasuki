@@ -174,4 +174,9 @@ export const templateInput = z.object({
 	typeId: z.string().nullish(),
 	bodyTemplateMd: md(50000).default(""),
 });
-export const templatePatch = templateInput.partial();
+// No defaults here: a PATCH {name} must not reset the body.
+export const templatePatch = z.object({
+	name: templateInput.shape.name.optional(),
+	typeId: templateInput.shape.typeId,
+	bodyTemplateMd: md(50000).optional(),
+});

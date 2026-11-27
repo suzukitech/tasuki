@@ -1,5 +1,5 @@
 import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
+import { BlockList, isIP } from "node:net";
 import {
 	type IssueEvent,
 	testText,
@@ -8,67 +8,52 @@ import {
 } from "@tasuki/core";
 import type { Db } from "@tasuki/db";
 
+/** "retry" = may be transient (network, timeout, DNS); "failed" = the peer answered non-2xx. */
 export type Sent =
 	| { ok: true }
-	| { ok: false; reason: "blocked" | "timeout" | "http" | "network" };
+	| { ok: false; reason: "blocked" | "retry" | "failed" };
 
-const v4 = (ip: string) =>
-	ip.split(".").map(Number) as [number, number, number, number];
+// Addresses a webhook must never reach. IPv6 forms that embed an IPv4 address (mapped,
+// translated, NAT64, 6to4, Teredo) are blocked whole instead of unpacking them.
+// Separate lists per family: a v6 ::ffff:0:0/96 rule would otherwise match every IPv4 address.
+const blocked4 = new BlockList();
+const blocked6 = new BlockList();
+for (const [net, len] of [
+	["0.0.0.0", 8],
+	["10.0.0.0", 8],
+	["100.64.0.0", 10], // CGNAT
+	["127.0.0.0", 8],
+	["169.254.0.0", 16], // link-local, cloud metadata
+	["172.16.0.0", 12],
+	["192.0.0.0", 16],
+	["192.168.0.0", 16],
+	["198.18.0.0", 15],
+	["224.0.0.0", 3], // multicast + reserved + broadcast
+] as const)
+	blocked4.addSubnet(net, len, "ipv4");
+for (const [net, len] of [
+	["::", 96], // unspecified, loopback, v4-compatible
+	["::ffff:0:0", 96], // IPv4-mapped
+	["::ffff:0:0:0", 96], // IPv4-translated
+	["64:ff9b::", 96], // NAT64
+	["64:ff9b:1::", 48],
+	["2001::", 32], // Teredo
+	["2002::", 16], // 6to4
+	["fc00::", 7], // unique local
+	["fe80::", 10], // link-local
+	["ff00::", 8], // multicast
+] as const)
+	blocked6.addSubnet(net, len, "ipv6");
 
-function privateV4(ip: string) {
-	const [a, b] = v4(ip);
-	return (
-		a === 0 ||
-		a === 10 ||
-		a === 127 ||
-		a >= 224 || // multicast + reserved + broadcast
-		(a === 100 && b >= 64 && b <= 127) || // CGNAT
-		(a === 169 && b === 254) || // link-local, cloud metadata
-		(a === 172 && b >= 16 && b <= 31) ||
-		(a === 192 && (b === 168 || b === 0)) ||
-		(a === 198 && (b === 18 || b === 19))
-	);
-}
-
-/** Eight 16-bit groups of an IPv6 literal. */
-function groups(ip: string) {
-	const [head = "", tail] = ip.toLowerCase().split("::");
-	const parts = (s: string) => (s ? s.split(":") : []);
-	let h = parts(head);
-	let t = tail === undefined ? [] : parts(tail);
-	// a trailing dotted IPv4 counts as two groups
-	const fix = (g: string[]) =>
-		g.flatMap((x) => {
-			if (!x.includes(".")) return [x];
-			const [a, b, c, d] = v4(x);
-			return [((a << 8) | b).toString(16), ((c << 8) | d).toString(16)];
-		});
-	h = fix(h);
-	t = fix(t);
-	const mid =
-		tail === undefined ? [] : Array(8 - h.length - t.length).fill("0");
-	return [...h, ...mid, ...t].map((x) => Number.parseInt(x, 16));
-}
-
-/** True for addresses a webhook must never reach: loopback, private, link-local, metadata, mapped/embedded v4. */
+/** True for addresses a webhook must never reach. */
 export function isPrivateIp(ip: string): boolean {
 	const kind = isIP(ip);
-	if (kind === 4) return privateV4(ip);
-	if (kind !== 6) return true; // not an address at all: refuse
-	const g = groups(ip);
-	const embedded = (hi: number, lo: number) =>
-		`${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
-	if (g.slice(0, 5).every((x) => x === 0) && (g[5] === 0xffff || g[5] === 0))
-		return privateV4(embedded(g[6] ?? 0, g[7] ?? 0)); // ::ffff:a.b.c.d, ::a.b.c.d, ::, ::1
-	if (g[0] === 0x64 && g[1] === 0xff9b) return true; // NAT64
-	if (g[0] === 0x2002) return privateV4(embedded(g[1] ?? 0, g[2] ?? 0)); // 6to4
-	const top = g[0] ?? 0;
-	return (
-		(top & 0xfe00) === 0xfc00 || // unique local
-		(top & 0xffc0) === 0xfe80 || // link-local
-		(top & 0xff00) === 0xff00 // multicast
-	);
+	if (kind === 4) return blocked4.check(ip, "ipv4");
+	return kind !== 6 || blocked6.check(ip, "ipv6");
 }
+
+/** Module-level so tests can shorten them. */
+export const timing = { retryMs: 1000, timeoutMs: 5000 };
 
 type Opts = {
 	baseUrl: string;
@@ -76,7 +61,6 @@ type Opts = {
 	fetch?: typeof fetch;
 	/** every address the host resolves to */
 	lookup?: (host: string) => Promise<string[]>;
-	retryMs?: number;
 	/** extra TLS options for https deliveries (tests: a private CA) */
 	tls?: Record<string, unknown>;
 };
@@ -101,7 +85,16 @@ export function createWebhooks(db: Db, o: Opts) {
 			if (u.protocol !== "http:" && u.protocol !== "https:")
 				return { ok: false, reason: "blocked" };
 			const name = u.hostname.replace(/^\[|\]$/g, "");
-			const addrs = await resolve(name);
+			let timer: ReturnType<typeof setTimeout> | undefined;
+			const addrs = await Promise.race([
+				resolve(name),
+				new Promise<never>((_, rej) => {
+					timer = setTimeout(
+						() => rej(new Error("dns timeout")),
+						timing.timeoutMs,
+					);
+				}),
+			]).finally(() => clearTimeout(timer));
 			if (!addrs.length || (!o.allowPrivate && addrs.some(isPrivateIp)))
 				return { ok: false, reason: "blocked" };
 			const ip = addrs[0] as string;
@@ -116,7 +109,7 @@ export function createWebhooks(db: Db, o: Opts) {
 				},
 				body: JSON.stringify({ text }),
 				redirect: "manual",
-				signal: AbortSignal.timeout(5000),
+				signal: AbortSignal.timeout(timing.timeoutMs),
 				...(u.protocol === "https:" && {
 					tls: { ...o.tls, ...(!literal && { serverName: name }) },
 				}),
@@ -124,24 +117,21 @@ export function createWebhooks(db: Db, o: Opts) {
 			await res.body?.cancel().catch(() => {});
 			return res.status >= 200 && res.status < 300
 				? { ok: true }
-				: { ok: false, reason: "http" };
-		} catch (e) {
-			return {
-				ok: false,
-				reason: (e as Error)?.name === "TimeoutError" ? "timeout" : "network",
-			};
+				: { ok: false, reason: "failed" };
+		} catch {
+			return { ok: false, reason: "retry" };
 		}
 	}
 
 	async function deliver(id: string, url: string, text: string) {
 		let r = await post(url, text);
 		// one retry, only for what may be transient
-		if (!r.ok && (r.reason === "network" || r.reason === "timeout")) {
-			await new Promise((d) => setTimeout(d, o.retryMs ?? 1000));
+		if (!r.ok && r.reason === "retry") {
+			await new Promise((d) => setTimeout(d, timing.retryMs));
 			r = await post(url, text);
 		}
 		// the id only: the URL is a secret and must never reach a log
-		if (!r.ok) console.error(`webhook ${id} delivery failed: ${r.reason}`);
+		if (!r.ok) console.error(`webhook ${id} delivery failed`);
 	}
 
 	return {

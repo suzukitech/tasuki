@@ -1,3 +1,5 @@
+import { unlinkSync } from "node:fs";
+import { join } from "node:path";
 import {
 	acceptanceCriteria,
 	activities,
@@ -430,9 +432,9 @@ export function updateIssue(
 	});
 }
 
-/** Deletes the issue; returns its attachment paths so the caller can remove the files. */
+/** Deletes the issue and (when `ctx.dataDir` is set) its attachment files; returns their relative paths. */
 export function deleteIssue(ctx: Ctx, ref: string) {
-	return atomic(ctx, (c) => {
+	const paths = atomic(ctx, (c) => {
 		const l = loadIssue(c, ref, "manager");
 		const paths = c.db
 			.select({ path: attachments.path })
@@ -444,6 +446,12 @@ export function deleteIssue(ctx: Ctx, ref: string) {
 		record(c, "issue.deleted", l.project.id, l.ref);
 		return paths;
 	});
+	for (const p of paths) {
+		try {
+			if (ctx.dataDir) unlinkSync(join(ctx.dataDir, p));
+		} catch {}
+	}
+	return paths;
 }
 
 export function insertComment(c: Ctx, issueId: string, bodyMd: string) {

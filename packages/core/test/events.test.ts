@@ -105,6 +105,25 @@ describe("events", () => {
 		expect(w.events).toEqual([]);
 	});
 
+	test("bulkUpdate collapses only updated/moved; other event types pass through", () => {
+		const w = watched();
+		const a = w.issue();
+		const done = w.db.query.statuses
+			.findFirst({ where: (t, { eq }) => eq(t.category, "ready") })
+			.sync();
+		w.events.length = 0;
+		bulkUpdate(w.ctx(w.u.mgr), {
+			refs: [a.ref],
+			assigneeId: w.u.mem.id,
+			statusId: done?.id,
+		});
+		const types = w.events.map((e) => e.type);
+		expect(types.filter((t) => t === "issue.updated")).toHaveLength(1);
+		expect(types).not.toContain("issue.moved");
+		for (const t of ["issue.assigned", "notification.created"])
+			expect(types).toContain(t as never);
+	});
+
 	test("etag helpers round-trip", () => {
 		const t = etagOf({ updatedAt: new Date(1234) });
 		expect(t).toBe('"1234"');

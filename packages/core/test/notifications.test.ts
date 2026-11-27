@@ -140,8 +140,10 @@ describe("notifications", () => {
 		const w = world();
 		w.db.delete(projectMembers).run();
 		expect(listNotifications(w.ctx(w.u.mem)).items).toEqual([]);
+		expect(listNotifications(w.ctx(w.u.mem)).unread).toBe(0);
 		setMember(w.ctx(w.u.admin), "WEB", w.u.mem.id, "member");
 		expect(listNotifications(w.ctx(w.u.mem)).items).toHaveLength(1);
+		expect(listNotifications(w.ctx(w.u.mem)).unread).toBe(1);
 		const readOnly = w.ctx(w.u.mem, "token", {
 			scopes: ["read"],
 			projectIds: null,

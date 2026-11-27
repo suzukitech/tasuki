@@ -25,8 +25,7 @@ export function notify(
 
 /**
  * The actor's own notifications, unread first then newest first.
- * ponytail: `unread` counts rows in the db, including issues in projects the user has
- * since lost access to (those rows are hidden from `items`). Prune on member removal if it shows.
+ * `unread` counts only projects the actor can still read, like `items`.
  */
 export function listNotifications(ctx: Ctx, limit = 30) {
 	requireScope(ctx, "read");
@@ -66,12 +65,14 @@ export function listNotifications(ctx: Ctx, limit = 30) {
 		}
 		return readable.get(id);
 	};
-	const unread =
-		ctx.db
-			.select({ n: sql<number>`count(*)` })
-			.from(notifications)
-			.where(and(eq(notifications.userId, uid), isNull(notifications.readAt)))
-			.get()?.n ?? 0;
+	const unread = ctx.db
+		.select({ pid: issues.projectId, n: sql<number>`count(*)` })
+		.from(notifications)
+		.innerJoin(issues, eq(issues.id, notifications.issueId))
+		.where(and(eq(notifications.userId, uid), isNull(notifications.readAt)))
+		.groupBy(issues.projectId)
+		.all()
+		.reduce((sum, r) => sum + (ok(r.pid) ? r.n : 0), 0);
 	return {
 		items: rows
 			.filter((r) => ok(r.projectId))

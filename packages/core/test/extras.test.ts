@@ -1,4 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import {
+	existsSync,
+	mkdirSync,
+	mkdtempSync,
+	rmSync,
+	writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { attachments } from "@tasuki/db";
 import {
 	addAttachment,
@@ -133,6 +142,9 @@ describe("templates", () => {
 		expect(up.bodyTemplateMd).toBe("new");
 		expect(up.name).toBe("Bug");
 		expect(updateTemplate(w.ctx(w.u.mgr), "WEB", t.id, {}).name).toBe("Bug");
+		const ren = updateTemplate(w.ctx(w.u.mgr), "WEB", t.id, { name: "Bug2" });
+		expect(ren.name).toBe("Bug2");
+		expect(ren.bodyTemplateMd).toBe("new"); // a rename must not wipe the body
 		expect(
 			code(() => updateTemplate(w.ctx(w.u.mgr), "WEB", "zzz", { name: "q" })),
 		).toBe("not_found");
@@ -189,7 +201,14 @@ describe("attachments", () => {
 		expect(getAttachment(w.ctx(w.u.view), "a1").contentType).toBe("image/png");
 		expect(code(() => getAttachment(w.ctx(w.u.out), "a1"))).toBe("forbidden");
 		expect(code(() => getAttachment(w.ctx(w.u.mem), "zz"))).toBe("not_found");
-		expect(deleteIssue(w.ctx(w.u.mgr), i.ref)).toEqual(["attachments/a1"]);
+		const dir = mkdtempSync(join(tmpdir(), "tasuki-"));
+		mkdirSync(join(dir, "attachments"));
+		writeFileSync(join(dir, "attachments/a1"), "x");
+		expect(deleteIssue({ ...w.ctx(w.u.mgr), dataDir: dir }, i.ref)).toEqual([
+			"attachments/a1",
+		]);
+		expect(existsSync(join(dir, "attachments/a1"))).toBe(false);
+		rmSync(dir, { recursive: true });
 		expect(w.db.select().from(attachments).all()).toEqual([]);
 	});
 });

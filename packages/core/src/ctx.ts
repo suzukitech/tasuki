@@ -23,6 +23,8 @@ export type Ctx = {
 	db: Conn;
 	actor: Actor;
 	now?: () => Date;
+	/** Data directory holding attachment files; `deleteIssue` removes them after commit. */
+	dataDir?: string;
 	/** Called once per recorded event, only after the outermost transaction commits. */
 	emit?: (e: IssueEvent) => void;
 	/** Events recorded inside the running `atomic` (internal). */

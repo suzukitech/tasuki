@@ -636,7 +636,7 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 
 - 「誰かの番になった」瞬間に `notifications` へ1行入れる（`kind`: `plan_submitted` / `report_submitted` / `question_asked` / `question_answered` / `assigned`）。宛先は `reviewerOf`（承認者、なければ依頼者）が計画提出・結果提出・質問、担当者が回答、新しい担当者が割り当て（作成時を含む）。**操作した本人には送らない**。AIの番（担当者がAIの作業中）には送らない。
 - 行の追加は変更と同じトランザクション内（`atomic`）で行い、コミット後にだけ、ユーザー宛てのイベント `notification.created`（`userId` を持つ）を `ctx.emit` へ流す。SSEは `userId` を持つイベントを、そのユーザーの購読にだけ配信する（プロジェクト権限のキャッシュを通さず、宛先の本人確認だけ。他人のストリームには決して出さない）。Webは受け取ると通知一覧を読み直す。
-- REST: `GET /me/notifications?limit=`（未読が先、その中は新しい順。応答は `{items, unread}`。`items` は `{id, kind, ref, title, readAt, createdAt}`）、`POST /me/notifications/read`（`{ids}` または `{all: true}`。自分の通知だけが対象）。トークンも自分の通知は読める（読み取りスコープ）。既読にするのは書き込みスコープ。
+- REST: `GET /me/notifications?limit=`（未読が先、その中は新しい順。応答は `{items, unread}`（`unread` は `items` と同じく、いま読めるプロジェクトの通知だけを数える）。`items` は `{id, kind, ref, title, readAt, createdAt}`）、`POST /me/notifications/read`（`{ids}` または `{all: true}`。自分の通知だけが対象）。トークンも自分の通知は読める（読み取りスコープ）。既読にするのは書き込みスコープ。
 - UI: サイドバーにベル（未読数のバッジ）。ポップオーバーに相対時刻、チケット番号、タイトル、日本語の理由（例: 「計画が提出されました」）を並べ、クリックで `?issue=` のパネルを開いて既読にする。「すべて既読にする」あり。チケットが削除されたら通知も消える（外部キーのカスケード）。
 
 ### Slack形式のWebhook
@@ -644,8 +644,8 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 - プロジェクト管理者が設定する（セッションのみ。URLは秘密なのでトークンでは触れない）。`GET/POST /projects/:key/webhooks`、`DELETE /projects/:key/webhooks/:id`、`POST /projects/:key/webhooks/:id/test`。
 - 通知する出来事は固定の6つから選ぶ: `plan.submitted` / `report.submitted` / `question.asked` / `question.answered` / `issue.assigned` / `issue.completed`。`issue.assigned` は担当者が変わったときに足した新しいイベント種別。
 - 本文は Slack 互換の `{text}`（Discord は URL の末尾に `/slack` を付ければ受けられる）。日本語で、チケット番号、タイトル、何が起きたか、リンク（`TASUKI_BASE_URL`）を入れる。`& < >` はエスケープする。
-- 送信はコミット後に非同期（`ctx.emit` の後ろで走り、リクエストを待たせず、失敗させない）。`fetch` は5秒のタイムアウト（`AbortSignal.timeout`）、`redirect: "manual"`（3xxは失敗扱い）、リトライはネットワークエラーとタイムアウトに1回だけ（相手が応答したなら、5xxでも再送しない）。失敗のログはWebhookのIDだけで、**URLは決して出さない**（秘密のため）。
-- SSRF対策: スキームは http / https のみ。送信のたびにホスト名を解決（`dns.lookup`）し、**全アドレス**がループバック・プライベート・リンクローカル・CGNAT・メタデータ（169.254.0.0/16）・ユニークローカル（fc00::/7）・IPv4射影（`::ffff:`）・NAT64・6to4でないことを確かめる。1つでも該当すれば送らない。自前のMattermostなど社内向けは `TASUKI_WEBHOOK_ALLOW_PRIVATE=1` で許す。**接続は検査したIPに固定する**（DNSリバインディング対策）: 検査後に `fetch` へ渡すのは名前ではなくIPリテラルのURLで、`Host` ヘッダに元のホスト名を付ける。https は Bun の `tls: { serverName }` に元のホスト名を渡すので、証明書は元のホスト名に対して検証される（別名の証明書は拒否。実際のTLSサーバーで検証済み）。再解決が起きないので、名前の答えが2回目に変わっても内部へは届かない。リダイレクトは追わない（`redirect: "manual"`）。残るリスク: 検査したアドレスそのものが（許可した範囲内で）正当でも、そこへ送る内容は固定のSlack形式JSONだけで、応答は読まない（マネージャーがセッションで登録した宛先への、一方向の固定POST）。
+- 送信はコミット後に非同期（`ctx.emit` の後ろで走り、リクエストを待たせず、失敗させない）。`fetch` は5秒のタイムアウト（`AbortSignal.timeout`。DNSの解決も同じ5秒）、`redirect: "manual"`（3xxは失敗扱い）、リトライ（1秒待つ）はネットワークエラー・DNS失敗・タイムアウトに1回だけ（相手が応答したなら、5xxでも再送しない）。失敗のログはWebhookのIDだけで、**URLは決して出さない**（秘密のため）。
+- SSRF対策: スキームは http / https のみ。送信のたびにホスト名を解決（`dns.lookup`）し、**全アドレス**がループバック・プライベート・リンクローカル・CGNAT・メタデータ（169.254.0.0/16）・ユニークローカル（fc00::/7）・IPv4射影（`::ffff:0:0/96`、`::ffff:0:0:0/96`）・NAT64・6to4・Teredo（`2001::/32`）でないことを確かめる（`node:net` の `BlockList`。IPv4を埋め込むIPv6形式は中身を取り出さず丸ごと拒否する）。DNSの解決にも `fetch` と同じ5秒のタイムアウトをかける。1つでも該当すれば送らない。自前のMattermostなど社内向けは `TASUKI_WEBHOOK_ALLOW_PRIVATE=1` で許す。**接続は検査したIPに固定する**（DNSリバインディング対策）: 検査後に `fetch` へ渡すのは名前ではなくIPリテラルのURLで、`Host` ヘッダに元のホスト名を付ける。https は Bun の `tls: { serverName }` に元のホスト名を渡すので、証明書は元のホスト名に対して検証される（別名の証明書は拒否。実際のTLSサーバーで検証済み）。再解決が起きないので、名前の答えが2回目に変わっても内部へは届かない。リダイレクトは追わない（`redirect: "manual"`）。残るリスク: 検査したアドレスそのものが（許可した範囲内で）正当でも、そこへ送る内容は固定のSlack形式JSONだけで、応答は読まない（マネージャーがセッションで登録した宛先への、一方向の固定POST）。
 - URLは作成後は返さない。一覧は `https://host/…末尾4文字` に伏せたものだけ。作成時の応答も伏せたものを返す。入力したのは本人だから困らない。
 - 設定画面: プロジェクトの設定に「Webhook」を置く。追加（URL＋出来事のチェック）、テスト送信（結果を日本語で表示）、削除（画面内の確認）。テスト送信の結果は `ok` / 拒否（アドレス）/ 失敗の3つだけ返す。応答の本文・ヘッダ・状態コード・所要時間は返さず、タイムアウトと接続拒否も区別しない（内部ホストを探る道具にさせないため）。
 
@@ -654,7 +654,7 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 - `POST /issues/:ref/attachments`: ボディは画像のバイト列そのもの（`Content-Type: image/png|jpeg|gif|webp`）、ファイル名は `?filename=`。multipart は使わない（解析が要らず、Bun/Honoで最も単純）。CSRFの規則は保つ: この経路だけ `Content-Type` が上記の画像型でもよい（他サイトのフォームは `image/*` を単純リクエストで送れず、`fetch` なら事前確認で止まる）。セッションなら `X-Tasuki-CSRF` も必須。書き込みスコープのトークンも使える（AIの証拠スクリーンショット）。MCPのツールは今回は入れない。
 - 受け入れは png / jpeg / gif / webp のみ。**先頭のバイト列（マジックバイト）で判定**し、`Content-Type` は信用しない（判定結果を保存する）。上限は10 MB。権限確認を本文を読む前に行い、`Content-Length` が上限を超えれば読まずに413、ないときも読みながら数えて超えた時点で打ち切る。全体の1 MBの上限はこの経路だけ外す。
 - 保存先は `<TASUKI_DATA>/attachments/<uuidv7>`（利用者のファイル名はパスに使わない）。表示用のファイル名はDBにだけ置く（制御文字・パス区切りを除き100字まで）。
-- `GET /attachments/:id`: チケットのプロジェクトの閲覧権限を確かめ、保存した型で返す。`X-Content-Type-Options: nosniff`、`Content-Disposition: inline; filename*=UTF-8''...`、`Cache-Control: private`、`Content-Security-Policy: default-src 'none'`。チケットを削除したらファイルも消す。
+- `GET /attachments/:id`: チケットのプロジェクトの閲覧権限を確かめ、保存した型で返す。`X-Content-Type-Options: nosniff`、`Content-Disposition: inline; filename*=UTF-8''...`、`Cache-Control: private`、`Content-Security-Policy: default-src 'none'`。チケットを削除したらファイルも消す（coreの `deleteIssue` が `ctx.dataDir` を見てコミット後に消す。呼び出し側は何もしない）。
 - UI: 本文・コメントの入力欄に画像を貼る、またはドロップするとアップロードし、`![name](/api/v1/attachments/<id>)` を挿入する。アップロード中は表示を出し、大きすぎる・形式が違うは日本語で伝える。
 
 ### エディタ（Tiptapをやめた判断）

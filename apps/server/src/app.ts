@@ -323,7 +323,7 @@ export function createApp(
 		}
 		if (!actor)
 			throw new TasukiError("unauthorized", "authentication required");
-		c.set("ctx", { db, actor, emit });
+		c.set("ctx", { db, actor, emit, dataDir });
 		return next();
 	});
 
@@ -505,8 +505,7 @@ export function createApp(
 		return c.json(i);
 	});
 	api.delete("/issues/:ref", (c) => {
-		for (const p of deleteIssue(ctxOf(c), c.req.param("ref")))
-			void unlink(join(dataDir, p)).catch(() => {});
+		deleteIssue(ctxOf(c), c.req.param("ref"));
 		return c.body(null, 204);
 	});
 	api.post("/issues/:ref/attachments", async (c) => {
@@ -692,7 +691,7 @@ export function createApp(
 		const actor = bearerActor(c, token, "mcp:mcp");
 		if (!actor)
 			throw new TasukiError("unauthorized", "authentication required");
-		c.set("ctx", { db, actor, emit });
+		c.set("ctx", { db, actor, emit, dataDir });
 		return next();
 	});
 	const limit = bodyLimit({

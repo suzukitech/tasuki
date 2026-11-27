@@ -3,7 +3,10 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { sha256 } from "@tasuki/core";
 import { createEvents } from "../src/events";
-import { isPrivateIp } from "../src/webhooks";
+import { isPrivateIp, timing } from "../src/webhooks";
+
+timing.retryMs = 1;
+
 import { harness } from "./harness";
 
 const PNG = Uint8Array.from([
@@ -21,7 +24,6 @@ async function world() {
 			}) as unknown as typeof fetch,
 			lookup: async (host) =>
 				host === "internal.test" ? ["10.0.0.5"] : ["93.184.216.34"],
-			retryMs: 1,
 		},
 	});
 	const a = await h.setup();
@@ -336,7 +338,7 @@ describe("webhooks over REST", () => {
 		await Bun.sleep(60);
 		expect(w.calls).toHaveLength(3);
 		const logged = err.mock.calls.flat().join(" ");
-		expect(logged).toContain(`webhook ${made.id} delivery failed: network`);
+		expect(logged).toContain(`webhook ${made.id} delivery failed`);
 		expect(logged).not.toContain("SECRET");
 		err.mockRestore();
 	});
@@ -423,6 +425,31 @@ describe("webhook delivery is pinned to the checked address", () => {
 		}
 	});
 
+	test("a DNS lookup that hangs is cut off by the same timeout and reported as failed", async () => {
+		const prev = timing.timeoutMs;
+		timing.timeoutMs = 20;
+		try {
+			const h = harness({
+				webhook: { lookup: () => new Promise<string[]>(() => {}) },
+			});
+			const a = await h.setup();
+			await a.req("POST", "/projects", { key: "WEB", name: "Web" });
+			const hook = await (
+				await a.req("POST", "/projects/WEB/webhooks", {
+					url: "https://x.example.test/h",
+					events: ["plan.submitted"],
+				})
+			).json();
+			expect(
+				await (
+					await a.req("POST", `/projects/WEB/webhooks/${hook.id}/test`)
+				).json(),
+			).toEqual({ ok: false, reason: "failed" });
+		} finally {
+			timing.timeoutMs = prev;
+		}
+	});
+
 	test("https: real TLS to the pinned IP, certificate checked against the host name", async () => {
 		const dir = join(import.meta.dir, "fixtures");
 		const ca = await Bun.file(join(dir, "hook.pem")).text();
@@ -487,6 +514,16 @@ test("isPrivateIp covers loopback, private, link-local, metadata, mapped and v6 
 		"::1",
 		"::ffff:127.0.0.1",
 		"::ffff:7f00:1",
+		"::ffff:0:7f00:1",
+		"::ffff:8.8.8.8", // mapped is blocked whole
+		"64:ff9b::",
+		"64:ff9b:1::1",
+		"2002::",
+		"2001::",
+		"2001:0:4136:e378:8000:63bf:3fff:fdd2",
+		"192.0.2.1",
+		"198.19.0.1",
+		"255.255.255.255",
 		"fc00::1",
 		"fd12:3456::1",
 		"fe80::1",
@@ -501,7 +538,6 @@ test("isPrivateIp covers loopback, private, link-local, metadata, mapped and v6 
 		"8.8.8.8",
 		"172.32.0.1",
 		"2606:4700:4700::1111",
-		"::ffff:8.8.8.8",
 	])
 		expect(isPrivateIp(ip)).toBe(false);
 });

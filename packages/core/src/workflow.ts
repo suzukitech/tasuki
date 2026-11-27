@@ -37,6 +37,7 @@ import {
 	atomic,
 	type Ctx,
 	fail,
+	type IssueEvent,
 	log,
 	nowOf,
 	parse,
@@ -808,14 +809,14 @@ export function bulkUpdate(ctx: Ctx, input: unknown) {
 			if (Object.keys(edit).length) updateIssue(inner, ref, edit);
 			if (statusId) moveIssue(inner, ref, { statusId });
 		}
-		// user-scoped and webhook events pass through; the rest collapse to one update per issue
-		const pass = ["notification.created", "issue.assigned", "issue.completed"];
-		for (const e of inner.pending ?? [])
-			if (pass.includes(e.type))
-				record(c, e.type, e.projectId, e.ref, e.userId);
-		for (const e of new Map(
-			(inner.pending ?? []).map((e) => [e.ref, e]),
-		).values())
+		// only issue.updated / issue.moved collapse (one issue.updated per issue); everything else passes through
+		const collapse = new Set(["issue.updated", "issue.moved"]);
+		const once = new Map<string, IssueEvent>();
+		for (const e of inner.pending ?? []) {
+			if (collapse.has(e.type)) once.set(e.ref, e);
+			else record(c, e.type, e.projectId, e.ref, e.userId);
+		}
+		for (const e of once.values())
 			record(c, "issue.updated", e.projectId, e.ref);
 		return refs;
 	});
