@@ -97,3 +97,65 @@ describe("upload helpers", () => {
 		).toContain("PNG");
 	});
 });
+
+describe("uploadImage", () => {
+	const real = globalThis.fetch;
+	const file = new File([new Uint8Array([1, 2, 3])], "画面.png", {
+		type: "image/png",
+	});
+	test("sends the raw bytes with the image type and the filename", async () => {
+		const { uploadImage } = await import("../src/lib/upload");
+		let seen: { url: string; init: RequestInit } | undefined;
+		globalThis.fetch = (async (url: string, init: RequestInit) => {
+			seen = { url, init };
+			return Response.json(
+				{ id: "a1", filename: "画面.png", url: "/api/v1/attachments/a1" },
+				{ status: 201 },
+			);
+		}) as unknown as typeof fetch;
+		try {
+			const up = await uploadImage("WEB-1", file);
+			expect(up.url).toBe("/api/v1/attachments/a1");
+			expect(seen?.url).toBe(
+				`/api/v1/issues/WEB-1/attachments?filename=${encodeURIComponent("画面.png")}`,
+			);
+			expect(
+				(seen?.init.headers as Record<string, string>)["content-type"],
+			).toBe("image/png");
+			expect(seen?.init.body).toBe(file);
+		} finally {
+			globalThis.fetch = real;
+		}
+	});
+
+	test("a refusal becomes an ApiError that writeError words in Japanese", async () => {
+		const { uploadImage } = await import("../src/lib/upload");
+		globalThis.fetch = (async () =>
+			Response.json(
+				{ code: "too_large", detail: "image over 10 MB" },
+				{ status: 413 },
+			)) as unknown as typeof fetch;
+		try {
+			const e = await uploadImage("WEB-1", file).catch((x) => x);
+			expect(e).toBeInstanceOf(ApiError);
+			expect(writeError(e).text).toContain("10MB");
+		} finally {
+			globalThis.fetch = real;
+		}
+	});
+
+	test("a non-JSON failure still becomes an ApiError", async () => {
+		const { uploadImage } = await import("../src/lib/upload");
+		globalThis.fetch = (async () =>
+			new Response("<html>bad gateway</html>", {
+				status: 502,
+			})) as unknown as typeof fetch;
+		try {
+			const e = await uploadImage("WEB-1", file).catch((x) => x);
+			expect(e).toBeInstanceOf(ApiError);
+			expect(e.status).toBe(502);
+		} finally {
+			globalThis.fetch = real;
+		}
+	});
+});

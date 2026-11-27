@@ -138,11 +138,7 @@ describe("notifications", () => {
 
 	test("items for a project you lost access to are hidden; tokens need scope", () => {
 		const w = world();
-		w.db
-			.delete(
-				(require("@tasuki/db") as typeof import("@tasuki/db")).projectMembers,
-			)
-			.run();
+		w.db.delete(projectMembers).run();
 		expect(listNotifications(w.ctx(w.u.mem)).items).toEqual([]);
 		setMember(w.ctx(w.u.admin), "WEB", w.u.mem.id, "member");
 		expect(listNotifications(w.ctx(w.u.mem)).items).toHaveLength(1);

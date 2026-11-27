@@ -49,6 +49,8 @@ function Inlines({ nodes }: { nodes: Inline[] }): ReactNode {
 						/>
 					</a>
 				);
+			default:
+				return null;
 		}
 	});
 }

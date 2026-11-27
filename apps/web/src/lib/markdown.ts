@@ -62,7 +62,7 @@ export function parseMarkdown(md: string): Block[] {
 	};
 	while (i < lines.length) {
 		const line = lines[i] ?? "";
-		let m: RegExpExecArray | null;
+		const m = /^(#{1,3})\s+(.*)$/.exec(line);
 		if (/^```/.test(line)) {
 			flush();
 			const code: string[] = [];
@@ -70,7 +70,7 @@ export function parseMarkdown(md: string): Block[] {
 				code.push(lines[i] ?? "");
 			i++;
 			out.push({ t: "code", s: code.join("\n") });
-		} else if ((m = /^(#{1,3})\s+(.*)$/.exec(line))) {
+		} else if (m) {
 			flush();
 			out.push({ t: "h", level: (m[1] ?? "#").length, c: inline(m[2] ?? "") });
 			i++;
