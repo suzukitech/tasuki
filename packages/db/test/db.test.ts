@@ -7,7 +7,6 @@ import { eq, sql } from "drizzle-orm";
 import {
 	agentSessions,
 	type Db,
-	embeddedMigrations,
 	issues,
 	openDb,
 	searchIssueIds,
@@ -198,28 +197,38 @@ describe("migrations", () => {
 			"CREATE TABLE b (x int);--> statement-breakpoint\nCREATE TABLE c (x int);",
 	};
 
-	test("embeddedMigrations splits statements and hashes the text", () => {
-		const m = embeddedMigrations(journal, sqlByTag);
-		expect(m[1]?.sql).toHaveLength(2);
-		expect(m[0]?.folderMillis).toBe(1000);
-		expect(m[0]?.hash).toMatch(/^[0-9a-f]{64}$/);
-		expect(() => embeddedMigrations(journal, {})).toThrow("0000_a");
+	test("embedded migrations apply through the public migrate(); a missing file is an error", () => {
+		const db = openDb(":memory:", { migrations: { journal, sql: sqlByTag } });
+		expect(
+			db.$client
+				.query(
+					"SELECT count(*) AS n FROM sqlite_master WHERE name IN ('a','b','c')",
+				)
+				.get(),
+		).toEqual({ n: 3 });
+		expect(() =>
+			openDb(":memory:", { migrations: { journal, sql: {} } }),
+		).toThrow("0000_a");
 	});
 
 	test("snapshot before pending migrations only on an already-migrated db", () => {
 		const d = dir();
 		const path = join(d, "t.db");
 		const backups = join(d, "backups");
-		const all = embeddedMigrations(journal, sqlByTag);
+		const first = {
+			journal: { entries: journal.entries.slice(0, 1) },
+			sql: sqlByTag,
+		};
+		const all = { journal, sql: sqlByTag };
 		// fresh db: nothing to protect
 		openDb(path, {
-			migrations: all.slice(0, 1),
+			migrations: first,
 			backupDir: backups,
 		}).$client.close();
 		expect(existsSync(backups)).toBe(false);
 		// up to date: no backup
 		openDb(path, {
-			migrations: all.slice(0, 1),
+			migrations: first,
 			backupDir: backups,
 		}).$client.close();
 		expect(existsSync(backups)).toBe(false);

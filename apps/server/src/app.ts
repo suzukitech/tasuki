@@ -742,8 +742,12 @@ export function createApp(
 	const assets = opts.webAssets;
 	/** The file for a URL path, or undefined (traversal-safe for the directory form). */
 	const find = (p: string) => {
-		if (assets) return assets[p] ? Bun.file(assets[p]) : undefined;
-		const file = webDir && resolve(webDir, `.${safeDecode(p)}`);
+		const d = safeDecode(p);
+		if (assets)
+			return Object.hasOwn(assets, d)
+				? Bun.file(assets[d] as string)
+				: undefined;
+		const file = webDir && resolve(webDir, `.${d}`);
 		return webDir && file?.startsWith(webDir + sep)
 			? Bun.file(file)
 			: undefined;

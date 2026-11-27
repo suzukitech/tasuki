@@ -60,8 +60,13 @@ describe("SPA serving", () => {
 			webAssets: {
 				"/index.html": join(dir, "index.html"),
 				"/assets/a.js": join(dir, "assets", "a.js"),
+				"/assets/日本語.js": join(dir, "assets", "a.js"),
 			},
 		});
+		const jp = await app.request(`/assets/${encodeURIComponent("日本語.js")}`);
+		expect(await jp.text()).toBe("console.log(1)");
+		expect((await app.request("/assets/constructor")).status).toBe(404);
+		expect((await app.request("/__proto__")).status).not.toBe(500);
 		const a = await app.request("/assets/a.js");
 		expect(await a.text()).toBe("console.log(1)");
 		expect(a.headers.get("cache-control")).toContain("immutable");
