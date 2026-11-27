@@ -46,6 +46,21 @@
         "vite": "8.3.8",
       },
     },
+    "packages/cli": {
+      "name": "@tasuki/cli",
+      "bin": {
+        "tasuki": "./src/index.ts",
+      },
+      "dependencies": {
+        "@modelcontextprotocol/sdk": "~1.32.0",
+        "@tasuki/core": "workspace:*",
+        "@tasuki/db": "workspace:*",
+        "@tasuki/server": "workspace:*",
+      },
+      "devDependencies": {
+        "@tasuki/mcp": "workspace:*",
+      },
+    },
     "packages/core": {
       "name": "@tasuki/core",
       "dependencies": {
@@ -276,6 +291,8 @@
     "@tanstack/router-core": ["@tanstack/router-core@1.171.39", "", { "dependencies": { "@tanstack/history": "1.162.5", "cookie-es": "^3.0.0", "seroval": "^1.6.7", "seroval-plugins": "^1.6.7" } }, "sha512-qUhoJ0meuSUqGYQbHbcJYdASr06YtK+bulbj6vtrhKYFkLgkSsZ6tXmMyym7sFxiSJSPYgasgozrL01LyyR/6A=="],
 
     "@tanstack/store": ["@tanstack/store@0.11.3", "", {}, "sha512-/Mt3h2Qe67HmRMc5SJ+8jM2Fp7O4fBbwOlS0ujUvx34KgAvkvdLSHrJatv0PJG5fbvlDsACTawMMY4ptCpVI8w=="],
+
+    "@tasuki/cli": ["@tasuki/cli@workspace:packages/cli"],
 
     "@tasuki/core": ["@tasuki/core@workspace:packages/core"],
 

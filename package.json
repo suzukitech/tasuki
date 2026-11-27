@@ -1,5 +1,6 @@
 {
 	"name": "tasuki",
+	"version": "0.1.0",
 	"private": true,
 	"type": "module",
 	"workspaces": [
@@ -14,7 +15,8 @@
 		"typecheck": "tsc --noEmit -p . && tsc --noEmit -p apps/web",
 		"test": "bun test",
 		"check": "bun run lint && bun run typecheck && bun test --coverage",
-		"e2e": "bun run build && bunx --bun playwright test"
+		"e2e": "bun run build && bunx --bun playwright test",
+		"build:bin": "bun scripts/build-bin.ts"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.9",
