@@ -10,6 +10,10 @@ export const ja = {
 	"nav.main": "メインメニュー",
 	"nav.review.count": "確認待ち {n}件",
 	"nav.newProject": "プロジェクトを作る",
+	"notfound.title": "ページが見つかりません",
+	"notfound.body":
+		"アドレスが違うか、ページが移動した可能性があります。トップから開き直してください。",
+	"notfound.back": "トップへ戻る",
 	"home.empty":
 		"参加しているプロジェクトがまだありません。下のフォームで最初のプロジェクトを作れます。",
 	"project.new.title": "プロジェクトを作る",
@@ -48,6 +52,7 @@ export const ja = {
 	"list.noMatch":
 		"条件に合うチケットがありません。検索を変えるか、空にして全件を表示してください。",
 	"list.error": "チケットを読み込めませんでした。",
+	"list.retry": "もう一度読み込む",
 	"list.more": "さらに読み込む",
 	"list.loading": "読み込んでいます",
 	"list.search": "検索",
@@ -90,10 +95,24 @@ export const ja = {
 	"turn.others": "他の人の番",
 
 	"toast.conflict": "他の人が先に更新しました。最新の内容を読み込みました",
-	"toast.failed": "変更できませんでした。",
+	"toast.failed": "変更できませんでした。時間をおいてもう一度試してください。",
 	"toast.forbidden":
 		"この操作をする権限がありません。プロジェクトの管理者に頼んでください。",
 	"toast.gate": "この操作は、ブラウザでログインした人だけができます。",
+	"toast.leaveReview":
+		"確認待ちのチケットは、ここからは動かせません。チケットを開いて、承認・差し戻し・完了にしてください。",
+	"toast.noPlan":
+		"計画が承認されていないので、作業中にはできません。計画を提出して承認を受けてください。",
+	"toast.enter.plan_review":
+		"計画確認へは、計画を提出すると進みます。ここへは直接動かせません。",
+	"toast.enter.impl_review":
+		"結果確認へは、結果を提出すると進みます。ここへは直接動かせません。",
+	"toast.enter.any":
+		"確認の状態へは、計画や結果を提出すると進みます。ここへは直接動かせません。",
+	"toast.badMove":
+		"その状態へは直接移せません。チケットを開いて、順番どおりに進めてください。",
+	"toast.notFound":
+		"対象が見つかりませんでした。他の人が消した可能性があります。画面を開き直してください。",
 	"toast.network":
 		"サーバーに届きませんでした。接続を確かめてもう一度試してください。",
 	"toast.close": "閉じる",
@@ -210,7 +229,13 @@ export const ja = {
 	"board.empty": "チケットはありません",
 	"board.count": "{n}件",
 	"board.card.role": "移動できるカード",
-	"board.move.fail": "移動できませんでした。",
+	"move.fail": "移動できませんでした。",
+	"board.partial":
+		"すべてのチケットを読み込んでいます。終わるまでカードは動かせません。",
+	"board.partial.error":
+		"一部のチケットを読み込めませんでした。読み込み直すまでカードは動かせません。",
+	"board.appended":
+		"並べ替えの位置を決められなかったので、列の末尾に置きました。",
 	"board.dnd.help":
 		"スペースキーでカードを持ち上げ、矢印キーで動かし、もう一度スペースキーで置きます。Escで取り消します。Enterで開きます。",
 	"board.dnd.start": "{name}を持ち上げました",
@@ -265,6 +290,8 @@ export const ja = {
 	"tokens.mcp": "Claude Code に登録するコマンド",
 	"tokens.done": "コピーしたので閉じる",
 	"tokens.list": "発行済みのトークン",
+	"tokens.error":
+		"アクセストークンの一覧を読み込めませんでした。画面を開き直してください。",
 	"tokens.empty": "まだトークンはありません。上のフォームから発行できます。",
 	"tokens.state.revoked": "失効済み",
 	"tokens.state.expired": "期限切れ",

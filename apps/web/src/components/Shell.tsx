@@ -7,6 +7,7 @@ import {
 	useParams,
 	useSearch,
 } from "@tanstack/react-router";
+import { isProjectKey } from "@tasuki/schema/pure";
 import {
 	ChevronsUpDown,
 	Columns3,
@@ -20,6 +21,7 @@ import {
 import { useEffect, useState } from "react";
 import { t } from "../i18n";
 import { api } from "../lib/api";
+import { useCurrentProject } from "../lib/lastProject";
 import {
 	useLiveUpdates,
 	useMe,
@@ -31,7 +33,7 @@ import { CommandPalette } from "./CommandPalette";
 import { Avatar, cx, IconButton, iconProps, Kbd, Menu } from "./ui";
 
 const link =
-	"flex min-h-8 items-center gap-2 rounded-control px-2 text-sm text-ink hover:bg-row-hover pointer-coarse:min-h-11 [&.active]:bg-selection [&.active]:font-medium [&.active]:text-ai-indigo [&.active]:shadow-[inset_2px_0_0_var(--indigo)]";
+	"flex min-h-8 shrink-0 whitespace-nowrap items-center gap-2 rounded-control px-2 text-sm text-ink hover:bg-row-hover pointer-coarse:min-h-11 [&.active]:bg-selection [&.active]:font-medium [&.active]:text-ai-indigo [&.active]:shadow-[inset_2px_0_0_var(--indigo)]";
 
 function Nav({
 	projectKey,
@@ -97,7 +99,7 @@ function Nav({
 					}}
 				/>
 			</div>
-			<div className="flex flex-wrap gap-1 max-md:basis-full md:flex-col md:gap-0.5">
+			<div className="flex gap-1 max-md:-mx-1 max-md:basis-full max-md:overflow-x-auto max-md:px-1 md:flex-col md:gap-0.5">
 				{projectKey && (
 					<>
 						<Link
@@ -152,7 +154,7 @@ function Nav({
 				<button
 					type="button"
 					onClick={onPalette}
-					className={cx(link, "w-full text-left")}
+					className={cx(link, "text-left md:w-full")}
 				>
 					<Search {...iconProps} />
 					{t("palette.open")}
@@ -181,7 +183,12 @@ function Nav({
 
 export function AppLayout() {
 	const me = useMe();
-	const { key } = useParams({ strict: false }) as { key?: string };
+	const { key: routeKey } = useParams({ strict: false }) as { key?: string };
+	const { project: sp } = useSearch({ strict: false }) as { project?: string };
+	// /settings has no project in its path: use its ?project=, else the last one visited
+	const key = useCurrentProject(
+		routeKey ?? (isProjectKey(sp) ? sp : undefined),
+	);
 	useLiveUpdates(!!me.data);
 	const [palette, setPalette] = useState(false);
 	useEffect(() => {

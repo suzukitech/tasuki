@@ -2,8 +2,10 @@ import {
 	createRootRoute,
 	createRoute,
 	createRouter,
+	Link,
 	Navigate,
 	Outlet,
+	redirect,
 	useParams,
 	useSearch,
 } from "@tanstack/react-router";
@@ -67,6 +69,19 @@ const list = createRoute({
 		return <ProjectView projectKey={key} search={search} />;
 	},
 });
+// v0.1 early builds linked the board as /p/KEY/board
+const oldBoard = createRoute({
+	getParentRoute: () => app,
+	path: "/p/$key/board",
+	beforeLoad: ({ params }) => {
+		throw redirect({
+			to: "/p/$key",
+			params: { key: params.key },
+			search: { view: "board" },
+			replace: true,
+		});
+	},
+});
 const newProject = createRoute({
 	getParentRoute: () => app,
 	path: "/new",
@@ -88,9 +103,26 @@ const tree = root.addChildren([
 	setup,
 	login,
 	invite,
-	app.addChildren([home, newProject, list, settings]),
+	app.addChildren([home, newProject, list, oldBoard, settings]),
 ]);
-export const router = createRouter({ routeTree: tree });
+function NotFound() {
+	return (
+		<main className="mx-auto max-w-md px-5 py-16">
+			<h1 className="mb-2 text-xl font-semibold">{t("notfound.title")}</h1>
+			<p className="mb-4 text-sm text-nezumi">{t("notfound.body")}</p>
+			<Link
+				to="/"
+				className="rounded-control text-sm font-medium text-ai-indigo underline"
+			>
+				{t("notfound.back")}
+			</Link>
+		</main>
+	);
+}
+export const router = createRouter({
+	routeTree: tree,
+	defaultNotFoundComponent: NotFound,
+});
 declare module "@tanstack/react-router" {
 	interface Register {
 		router: typeof router;

@@ -3,9 +3,15 @@ import { Link, useNavigate } from "@tanstack/react-router";
 import { Check, CircleAlert, Copy, UserMinus } from "lucide-react";
 import { type FormEvent, type ReactNode, useId, useState } from "react";
 import { t } from "../i18n";
-import { ApiError, api } from "../lib/api";
+import { api } from "../lib/api";
 import { relativeTime } from "../lib/format";
-import { useMe, useProject, useProjects } from "../lib/queries";
+import { useCurrentProject } from "../lib/lastProject";
+import {
+	useMe,
+	useProject,
+	useProjects,
+	useWriteFailure,
+} from "../lib/queries";
 import { expiryIso, type TokenRow, tokenView } from "../lib/settings";
 import type { Project, ProjectDetail, Role } from "../lib/types";
 import { Field } from "./Form";
@@ -25,6 +31,13 @@ import {
 
 export type SettingsSearch = { section?: "project"; project?: string };
 
+/** Today as YYYY-MM-DD in the viewer's local time (toISOString would be UTC: a day off before 9:00 in Japan). */
+const localDate = () => {
+	const d = new Date();
+	const p = (n: number) => String(n).padStart(2, "0");
+	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+};
+
 const card = "rounded-panel border border-line bg-surface p-4 max-md:p-3";
 const H3 = ({ children }: { children: ReactNode }) => (
 	<h3 className="mb-2 text-sm font-semibold">{children}</h3>
@@ -33,9 +46,10 @@ const ROLES: Role[] = ["manager", "member", "viewer"];
 const roleOptions = () =>
 	ROLES.map((r) => ({ value: r, label: t(`role.${r}`) }));
 
-/** Run a write: toast the server's words on failure, refetch the given queries on success. */
+/** Run a write: toast a plain-Japanese failure, refetch the given queries on success. */
 function useRun() {
 	const toast = useToast();
+	const fail = useWriteFailure();
 	const qc = useQueryClient();
 	return async (
 		fn: () => Promise<unknown>,
@@ -50,11 +64,7 @@ function useRun() {
 			if (ok) toast(ok, "success");
 			return true;
 		} catch (e) {
-			toast(
-				e instanceof ApiError
-					? `${t("settings.fail")}${e.message}`
-					: t("toast.network"),
-			);
+			fail(e, { prefix: t("settings.fail") });
 			return false;
 		}
 	};
@@ -156,33 +166,33 @@ function Tokens() {
 	const [only, setOnly] = useState("");
 	const [expires, setExpires] = useState("");
 	const [busy, setBusy] = useState(false);
-	const toast = useToast();
 	const tokensKey = ["tokens"];
 
 	const issue = async (e: FormEvent) => {
 		e.preventDefault();
 		if (busy || !name.trim()) return;
 		setBusy(true);
-		try {
-			const r = await api<Omit<Issued, "name">>("POST", "/me/tokens", {
-				name: name.trim(),
-				scopes: write ? ["read", "write"] : ["read"],
-				projectIds: only ? [only] : null,
-				expiresAt: expiryIso(expires),
-			});
-			setIssued({ ...r, name: name.trim() });
+		const ok = await run(
+			async () => {
+				const r = await api<Omit<Issued, "name">>("POST", "/me/tokens", {
+					name: name.trim(),
+					scopes: write ? ["read", "write"] : ["read"],
+					projectIds: only ? [only] : null,
+					expiresAt: expiryIso(expires),
+				});
+				setIssued({ ...r, name: name.trim() });
+			},
+			undefined,
+			[tokensKey],
+		);
+		if (ok) {
+			// the form returns to its defaults so the next token is not issued with the last one's scope
 			setName("");
 			setExpires("");
-			await tokens.refetch();
-		} catch (x) {
-			toast(
-				x instanceof ApiError
-					? `${t("settings.fail")}${x.message}`
-					: t("toast.network"),
-			);
-		} finally {
-			setBusy(false);
+			setWrite(true);
+			setOnly("");
 		}
+		setBusy(false);
 	};
 	const projectName = (id: string) =>
 		projects.find((p) => p.id === id)?.key ?? id;
@@ -274,7 +284,7 @@ function Tokens() {
 						type="date"
 						value={expires}
 						onChange={(e) => setExpires(e.target.value)}
-						min={new Date().toISOString().slice(0, 10)}
+						min={localDate()}
 						className="w-44"
 					/>
 				</div>
@@ -285,7 +295,11 @@ function Tokens() {
 
 			<div>
 				<H3>{t("tokens.list")}</H3>
-				{tokens.isLoading ? null : (tokens.data?.length ?? 0) === 0 ? (
+				{tokens.isLoading ? null : tokens.isError ? (
+					<p role="alert" className="text-sm text-sash">
+						{t("tokens.error")}
+					</p>
+				) : (tokens.data?.length ?? 0) === 0 ? (
 					<EmptyState icon={CircleAlert}>{t("tokens.empty")}</EmptyState>
 				) : (
 					<ul className="divide-y divide-line rounded-panel border border-line bg-surface">
@@ -438,7 +452,8 @@ function Members({
 	const run = useRun();
 	const [email, setEmail] = useState("");
 	const [role, setRole] = useState<Role>("member");
-	const refetch = [["project", project.key]];
+	// a member changing their own role or leaving also changes what the sidebar and every screen show
+	const refetch = [["project", project.key], ["projects"]];
 	return (
 		<div className={card}>
 			<H3>{t("project.members")}</H3>
@@ -639,8 +654,8 @@ function ProjectSettings({ search }: { search: SettingsSearch }) {
 	const nav = useNavigate();
 	const me = useMe().data;
 	const projects = useProjects().data ?? [];
-	const cur: Project | undefined =
-		projects.find((p) => p.key === search.project) ?? projects[0];
+	const key = useCurrentProject(search.project);
+	const cur: Project | undefined = projects.find((p) => p.key === key);
 	const detail = useProject(cur?.key ?? "").data;
 	if (!cur)
 		return <EmptyState icon={CircleAlert}>{t("home.empty")}</EmptyState>;
