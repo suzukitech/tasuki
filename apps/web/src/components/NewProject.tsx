@@ -4,7 +4,8 @@ import { type FormEvent, useState } from "react";
 import { t } from "../i18n";
 import { ApiError, api } from "../lib/api";
 import type { Project } from "../lib/types";
-import { Button, inputCls } from "./ui";
+import { Column, Field } from "./Form";
+import { Button } from "./ui";
 
 /** Minimal create form: key + name. Core decides who may (any signed-in user with write access). */
 export function NewProject({ lead }: { lead?: string }) {
@@ -35,37 +36,32 @@ export function NewProject({ lead }: { lead?: string }) {
 		}
 	};
 	return (
-		<main className="mx-auto mt-10 w-full max-w-sm px-4">
-			<h1 className="mb-2 text-xl font-bold">{t("project.new.title")}</h1>
-			{lead && <p className="mb-4 text-nezumi">{lead}</p>}
+		<Column title={t("project.new.title")} lead={lead}>
 			<form onSubmit={submit}>
-				<label className="mb-3 block text-sm font-bold">
-					{t("project.new.key")}
-					<input
-						name="key"
-						required
-						pattern="[A-Za-z]{2,10}"
-						className={`${inputCls} num mt-1 font-normal uppercase`}
-					/>
-				</label>
-				<label className="mb-3 block text-sm font-bold">
-					{t("project.new.name")}
-					<input
-						name="name"
-						required
-						maxLength={100}
-						className={`${inputCls} mt-1 font-normal`}
-					/>
-				</label>
-				{error && (
-					<p role="alert" className="mb-3 text-sash">
-						{error}
-					</p>
-				)}
-				<Button kind="primary" type="submit" disabled={busy}>
+				<Field
+					label={t("project.new.key")}
+					hint={t("project.new.key.hint")}
+					name="key"
+					required
+					pattern="[A-Za-z]{2,10}"
+					className="num uppercase"
+					error={error || undefined}
+				/>
+				<Field
+					label={t("project.new.name")}
+					name="name"
+					required
+					maxLength={100}
+				/>
+				<Button
+					kind="primary"
+					type="submit"
+					disabled={busy}
+					className="mt-2 h-10 w-full"
+				>
 					{t("project.new.submit")}
 				</Button>
 			</form>
-		</main>
+		</Column>
 	);
 }

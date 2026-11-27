@@ -1,6 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
+	CircleCheck,
+	FilePlus2,
+	Plus,
+	Search,
+	SearchX,
+	UserRound,
+} from "lucide-react";
+import {
 	type KeyboardEvent,
 	useCallback,
 	useEffect,
@@ -10,6 +18,7 @@ import {
 } from "react";
 import { t } from "../i18n";
 import { api } from "../lib/api";
+import { absoluteDate, relativeDue } from "../lib/format";
 import { keyAction } from "../lib/keys";
 import { PRIORITY_KEYS } from "../lib/priority";
 import {
@@ -21,15 +30,41 @@ import {
 	useReviewQueue,
 	useWriteFailure,
 } from "../lib/queries";
-import { buildCreate } from "../lib/quick";
+import { buildCreate, previewQuick } from "../lib/quick";
 import { turnOf } from "../lib/turn";
 import type { IssueRow, Me, ProjectDetail } from "../lib/types";
 import { IssuePanel } from "./Panel";
-import { Button, cx, inputCls, TurnBadge } from "./ui";
+import {
+	Avatar,
+	Button,
+	Chip,
+	cx,
+	EmptyState,
+	FlowToggle,
+	iconProps,
+	Kbd,
+	Menu,
+	PriorityGlyph,
+	Skeleton,
+	StatusDot,
+	TurnBadge,
+} from "./ui";
 
 export type ListSearch = { issue?: string; q?: string; view?: "review" };
 
 type Col = "status" | "assignee" | "priority";
+const COLS = [
+	"ref",
+	"title",
+	"status",
+	"assignee",
+	"priority",
+	"due",
+	"turn",
+] as const;
+
+const bare =
+	"bare min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-nezumi ";
 
 function Row(p: {
 	row: IssueRow;
@@ -42,119 +77,148 @@ function Row(p: {
 }) {
 	const { row, project } = p;
 	const qc = useQueryClient();
-	const [editing, setEditing] = useState<Col | null>(null);
 	const ref = useRef<HTMLTableRowElement>(null);
 	useEffect(() => {
 		if (p.selected) ref.current?.scrollIntoView({ block: "nearest" });
 	}, [p.selected]);
+	const status = project.statuses.find((s) => s.id === row.statusId);
 	const assignee = project.members.find((m) => m.id === row.assigneeId);
+	const due = row.dueDate ? relativeDue(row.dueDate) : null;
+	const priority = row.priority ?? 0;
 	// one line per cell on desktop; on a phone each row stacks (ref + title, then the small facts)
 	const cell =
-		"whitespace-nowrap border-b border-line px-2 py-1 align-middle max-md:border-0 max-md:p-0 max-md:text-sm";
-	const edit = (
-		col: Col,
-		label: string,
-		options: [string, string][],
-		value: string,
-		apply: (v: string) => void,
-	) =>
-		editing === col ? (
-			<select
-				// biome-ignore lint/a11y/noAutofocus: opened by the user clicking the cell / button
-				autoFocus
-				aria-label={label}
-				className="rounded border border-ai-indigo bg-surface px-1 py-0.5 text-base"
-				value={value}
-				onChange={(e) => {
-					setEditing(null);
-					if (e.target.value !== value) apply(e.target.value);
-				}}
-				onBlur={() => setEditing(null)}
-				onKeyDown={(e) => e.key === "Escape" && setEditing(null)}
+		"whitespace-nowrap border-b border-line px-3 align-middle max-md:border-0 max-md:p-0 max-md:text-xs";
+	const edit = (col: Col) =>
+		({
+			status: {
+				label: t("col.status"),
+				options: project.statuses.map((s) => ({
+					value: s.id,
+					label: s.name,
+					icon: <StatusDot category={s.category} />,
+				})),
+				value: row.statusId,
+				apply: (v: string) => p.onEdit({ row, patch: { statusId: v } }),
+			},
+			assignee: {
+				label: t("col.assignee"),
+				options: [
+					{ value: "", label: t("assignee.none"), icon: <NoAvatar /> },
+					...project.members.map((m) => ({
+						value: m.id,
+						label: m.name,
+						icon: <Avatar id={m.id} name={m.name} />,
+					})),
+				],
+				value: row.assigneeId ?? "",
+				apply: (v: string) =>
+					p.onEdit({ row, patch: { assigneeId: v || null } }),
+			},
+			priority: {
+				label: t("col.priority"),
+				options: PRIORITY_KEYS.map((k, i) => ({
+					value: String(i),
+					label: t(k),
+					icon: <PriorityGlyph level={i} label="" />,
+				})),
+				value: String(priority),
+				apply: (v: string) => p.onEdit({ row, patch: { priority: Number(v) } }),
+			},
+		})[col];
+	const menu = (col: Col, children: React.ReactNode) => {
+		const e = edit(col);
+		return (
+			<Menu
+				label={e.label}
+				value={e.value}
+				options={e.options}
+				onChange={e.apply}
+				className="-mx-1.5 min-h-7 px-1.5"
 			>
-				{options.map(([v, l]) => (
-					<option key={v} value={v}>
-						{l}
-					</option>
-				))}
-			</select>
-		) : (
-			<button
-				type="button"
-				className="text-left"
-				onClick={() => setEditing(col)}
-			>
-				{options.find(([v]) => v === value)?.[1] || " "}
-			</button>
+				{children}
+			</Menu>
 		);
+	};
 	return (
 		<tr
 			ref={ref}
 			aria-selected={p.selected}
+			data-open={p.open}
 			onMouseEnter={() =>
 				qc.prefetchQuery({ ...issueQuery(row.ref), staleTime: 10_000 })
 			}
-			className={cx(
-				"bg-surface hover:bg-paper max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:gap-y-1 max-md:border-b max-md:border-line max-md:py-2",
-				p.selected && "outline outline-2 -outline-offset-2 outline-ai-indigo",
-				p.open && "bg-paper",
-			)}
+			className="row h-10 bg-surface max-md:flex max-md:h-auto max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:gap-y-1 max-md:border-b max-md:border-line max-md:px-1 max-md:py-2.5"
 		>
-			<td className={cx(cell, "num text-nezumi")}>{row.ref}</td>
+			<td className={cx(cell, "num font-medium text-nezumi md:w-0")}>
+				{row.ref}
+			</td>
 			<td
 				className={cx(
 					cell,
-					"whitespace-normal md:w-full max-md:min-w-0 max-md:grow max-md:basis-0 max-md:text-base",
+					"w-full max-w-0 max-md:min-w-0 max-md:grow max-md:basis-0 max-md:max-w-none max-md:text-sm",
 				)}
 			>
-				<button
-					type="button"
-					className="text-left font-bold text-ai-indigo"
-					onClick={p.onOpen}
-				>
-					{row.title}
-				</button>
-				{row.labels.map((l) => (
-					<span key={l} className="ml-2 whitespace-nowrap text-xs text-nezumi">
-						#{l}
-					</span>
-				))}
+				<div className="flex min-w-0 items-center gap-2">
+					<button
+						type="button"
+						className="min-w-0 truncate rounded-chip text-left font-medium text-ink hover:text-ai-indigo max-md:whitespace-normal pointer-coarse:min-h-11"
+						onClick={p.onOpen}
+					>
+						{row.title}
+					</button>
+					{row.labels.map((l) => (
+						<Chip key={l} className="max-md:hidden @max-[760px]:hidden">
+							{l}
+						</Chip>
+					))}
+				</div>
 			</td>
 			{/* line break between the two lines of the stacked (phone) row */}
 			<td aria-hidden className="hidden max-md:block max-md:basis-full" />
 			<td className={cell}>
-				{edit(
+				{menu(
 					"status",
-					t("col.status"),
-					project.statuses.map((s) => [s.id, s.name]),
-					row.statusId,
-					(v) => p.onEdit({ row, patch: { statusId: v } }),
+					<>
+						{status && <StatusDot category={status.category} />}
+						<span>{status?.name}</span>
+					</>,
 				)}
 			</td>
 			<td className={cell}>
-				{edit(
+				{menu(
 					"assignee",
-					t("col.assignee"),
-					[
-						["", t("assignee.none")],
-						...project.members.map((m): [string, string] => [m.id, m.name]),
-					],
-					row.assigneeId ?? "",
-					(v) => p.onEdit({ row, patch: { assigneeId: v || null } }),
+					<>
+						{assignee ? (
+							<Avatar id={assignee.id} name={assignee.name} />
+						) : (
+							<NoAvatar />
+						)}
+						<span
+							className={cx("@max-[760px]:hidden", !assignee && "text-nezumi")}
+						>
+							{assignee?.name ?? (row.assigneeId ? "?" : t("assignee.none"))}
+						</span>
+					</>,
 				)}
-				{!assignee && row.assigneeId && editing !== "assignee" ? "?" : null}
 			</td>
 			<td className={cell}>
-				{edit(
+				{menu(
 					"priority",
-					t("col.priority"),
-					PRIORITY_KEYS.map((k, i): [string, string] => [String(i), t(k)]),
-					String(row.priority ?? 0),
-					(v) => p.onEdit({ row, patch: { priority: Number(v) } }),
+					<PriorityGlyph
+						level={priority}
+						label={t(PRIORITY_KEYS[priority] ?? "priority.none")}
+					/>,
 				)}
 			</td>
-			<td className={cx(cell, "num max-md:empty:hidden")}>
-				{row.dueDate ?? ""}
+			<td
+				className={cx(
+					cell,
+					"num max-md:empty:hidden",
+					due?.late && "font-medium text-sash",
+				)}
+				title={row.dueDate ? absoluteDate(row.dueDate) : undefined}
+			>
+				{due?.text}
 			</td>
 			<td className={cell}>
 				<TurnBadge turn={turnOf(row, project.statuses, p.me.id)} />
@@ -162,6 +226,41 @@ function Row(p: {
 		</tr>
 	);
 }
+
+const NoAvatar = () => (
+	<span
+		aria-hidden
+		className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-dashed border-line-strong text-nezumi"
+	>
+		<UserRound size={12} strokeWidth={1.75} />
+	</span>
+);
+
+function SkeletonRows() {
+	return (
+		<div aria-busy="true" className="space-y-px">
+			<span className="sr-only">{t("list.loading")}</span>
+			{[0, 1, 2, 3, 4, 5, 6].map((n) => (
+				<div
+					key={n}
+					className="flex h-10 items-center gap-4 border-b border-line px-3"
+				>
+					<Skeleton className="h-3 w-14" />
+					<Skeleton className="h-3 flex-1" />
+					<Skeleton className="h-3 w-20 max-md:hidden" />
+					<Skeleton className="size-5 rounded-full max-md:hidden" />
+					<Skeleton className="h-3 w-12 max-md:hidden" />
+				</div>
+			))}
+		</div>
+	);
+}
+
+const SEARCH_EXAMPLES = [
+	["status:plan_review", "ex.status"],
+	["assignee:me priority:>=high", "ex.mine"],
+	["label:bug due:<2026-12-31", "ex.due"],
+] as const;
 
 export function ProjectView({
 	projectKey,
@@ -187,6 +286,8 @@ export function ProjectView({
 	);
 	const [sel, setSel] = useState(-1);
 	const [ai, setAi] = useState(true);
+	const [draft, setDraft] = useState("");
+	const [searching, setSearching] = useState(false);
 	const createRef = useRef<HTMLInputElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const go = useCallback(
@@ -225,12 +326,11 @@ export function ProjectView({
 	const onCreate = async (e: KeyboardEvent<HTMLInputElement>) => {
 		if (e.key === "Escape") e.currentTarget.blur();
 		if (e.key !== "Enter" || e.nativeEvent.isComposing || !project) return;
-		const body = buildCreate(e.currentTarget.value, ai, project.members);
+		const body = buildCreate(draft, ai, project.members);
 		if (!body) return;
-		const input = e.currentTarget;
 		try {
 			await api("POST", `/projects/${projectKey}/issues`, body);
-			input.value = "";
+			setDraft("");
 			qc.invalidateQueries({ queryKey: ["issues", projectKey] });
 		} catch (x) {
 			fail(x);
@@ -245,120 +345,245 @@ export function ProjectView({
 	if (!project || !me) return null;
 	const loading = review ? queue.loading : list.isLoading;
 	const error = review ? queue.error : list.error;
+	const parsed = previewQuick(draft, project.members);
+	const chips: [string, string][] = [
+		...(parsed.assignee
+			? [[t("chip.assignee"), parsed.assignee.name] as [string, string]]
+			: []),
+		...parsed.labels.map((l): [string, string] => [t("chip.label"), l]),
+		...(parsed.priority
+			? [
+					[
+						t("chip.priority"),
+						t(PRIORITY_KEYS[parsed.priority] ?? "priority.none"),
+					] as [string, string],
+				]
+			: []),
+	];
 	return (
 		<div className="flex h-full">
-			<section className="min-w-0 flex-1 overflow-auto p-4">
-				<div className="mb-3 flex flex-wrap items-center gap-3">
-					<h1 className="mr-auto text-xl font-bold">
-						{review ? t("nav.review") : `${project.key} ${project.name}`}
-					</h1>
-					{!review && (
-						<input
-							ref={searchRef}
-							key={q}
-							defaultValue={q}
-							type="search"
-							aria-label={t("list.search")}
-							placeholder={t("list.search")}
-							title={t("list.search.hint")}
-							onKeyDown={onSearch}
-							className={cx(inputCls, "w-64")}
-						/>
-					)}
-				</div>
-				<div className="mb-3 flex items-center gap-3">
-					<input
-						ref={createRef}
-						aria-label={t("list.create.placeholder")}
-						placeholder={t("list.create.placeholder")}
-						onKeyDown={onCreate}
-						className={inputCls}
-					/>
-					<label className="flex items-center gap-1 whitespace-nowrap text-sm">
-						<input
-							type="checkbox"
-							checked={ai}
-							onChange={(e) => setAi(e.target.checked)}
-						/>
-						{t("list.create.ai")}
-					</label>
-				</div>
-				{loading ? (
-					<p className="text-nezumi">{t("list.loading")}</p>
-				) : error && rows.length === 0 ? (
-					<p role="alert" className="py-8 text-sash">
-						{t("list.error")}
-						{error.message}
-					</p>
-				) : rows.length === 0 ? (
-					<p className="py-8 text-nezumi">
-						{review
-							? t("review.empty")
-							: q
-								? t("list.noMatch")
-								: t("list.empty")}
-					</p>
-				) : (
-					<table className="w-full border-collapse text-base max-md:block">
-						<thead className="max-md:hidden">
-							<tr className="text-left text-sm text-nezumi">
-								{(
-									[
-										"ref",
-										"title",
-										"status",
-										"assignee",
-										"priority",
-										"due",
-										"turn",
-									] as const
-								).map((c) => (
-									<th
-										key={c}
-										className={cx(
-											"whitespace-nowrap border-b border-line px-2 py-1 font-normal",
-											c === "title" && "w-full",
-										)}
-									>
-										{t(`col.${c}`)}
-									</th>
-								))}
-							</tr>
-						</thead>
-						<tbody className="max-md:block">
-							{rows.map((row, i) => (
-								<Row
-									key={row.id}
-									row={row}
-									project={project}
-									me={me}
-									selected={i === sel}
-									open={row.ref === search.issue}
-									onOpen={() => {
-										setSel(i);
-										go({ issue: row.ref });
-									}}
-									onEdit={edit.mutate}
+			<section className="flex min-w-0 flex-1 flex-col">
+				<div className="space-y-3 px-5 pt-4 pb-3 max-md:px-3">
+					<div className="flex flex-wrap items-center gap-3">
+						<h1 className="mr-auto text-xl font-semibold">
+							{review ? (
+								t("nav.review")
+							) : (
+								<>
+									<span className="num mr-2 font-medium text-nezumi">
+										{project.key}
+									</span>
+									{project.name}
+								</>
+							)}
+						</h1>
+						{!review && (
+							<div className="relative w-72 max-md:w-full">
+								<Search
+									{...iconProps}
+									className="pointer-events-none absolute top-1/2 left-2.5 -translate-y-1/2 text-nezumi"
 								/>
-							))}
-						</tbody>
-					</table>
-				)}
-				{review && queue.truncated && (
-					<p className="mt-3 text-sm text-nezumi">{t("review.truncated")}</p>
-				)}
-				{!review && list.hasNextPage && (
-					<Button
-						className="mt-3"
-						onClick={() => list.fetchNextPage()}
-						disabled={list.isFetchingNextPage}
-					>
-						{t("list.more")}
-					</Button>
-				)}
-				<p className="mt-6 hidden text-xs text-nezumi md:block pointer-coarse:hidden">
-					{t("key.help")}
-				</p>
+								<input
+									ref={searchRef}
+									key={q}
+									defaultValue={q}
+									type="search"
+									aria-label={t("list.search")}
+									placeholder={t("list.search")}
+									onFocus={() => setSearching(true)}
+									onBlur={() => setSearching(false)}
+									onKeyDown={onSearch}
+									className="h-8 w-full rounded-control border border-line-strong bg-surface pr-8 pl-8 text-sm placeholder:text-nezumi pointer-coarse:h-11"
+								/>
+								<span className="absolute top-1/2 right-2 -translate-y-1/2">
+									<Kbd>/</Kbd>
+								</span>
+								{searching && (
+									<div className="pop absolute top-full right-0 z-30 mt-1.5 w-80 max-w-full rounded-panel border border-line bg-surface p-3 shadow-float">
+										<p className="mb-2 text-xs font-medium text-nezumi">
+											{t("search.help")}
+										</p>
+										<ul className="space-y-1.5">
+											{SEARCH_EXAMPLES.map(([ex, k]) => (
+												<li key={ex} className="flex flex-col gap-0.5">
+													<button
+														type="button"
+														// keep the input focused so the popover stays
+														onMouseDown={(e) => {
+															e.preventDefault();
+															if (searchRef.current)
+																searchRef.current.value = ex;
+														}}
+														className="w-fit rounded-chip text-left"
+													>
+														<Chip className="text-ink">{ex}</Chip>
+													</button>
+													<span className="text-xs text-nezumi">{t(k)}</span>
+												</li>
+											))}
+										</ul>
+									</div>
+								)}
+							</div>
+						)}
+					</div>
+					<div className="relative">
+						<div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-control border border-line-strong bg-surface px-2.5 py-1 focus-within:border-ai-indigo focus-within:shadow-[0_0_0_3px_var(--focus)] pointer-coarse:py-0.5">
+							<Plus {...iconProps} className="shrink-0 text-nezumi" />
+							<input
+								ref={createRef}
+								aria-label={t("list.create.placeholder")}
+								placeholder={t("list.create.placeholder")}
+								value={draft}
+								onChange={(e) => setDraft(e.target.value)}
+								onKeyDown={onCreate}
+								className={cx(bare, "h-8 min-w-48 pointer-coarse:h-11")}
+							/>
+							<Kbd>C</Kbd>
+							<FlowToggle
+								value={ai}
+								onChange={setAi}
+								label={t("list.create.flow")}
+							/>
+						</div>
+						{chips.length > 0 && (
+							<div
+								aria-live="polite"
+								className="pop absolute top-full left-0 z-30 mt-1.5 flex max-w-full flex-wrap items-center gap-1.5 rounded-panel border border-line bg-surface px-2 py-1.5 shadow-float"
+							>
+								{chips.map(([k, v]) => (
+									<Chip
+										key={`${k}${v}`}
+										className="gap-1 border-ai-indigo/30 bg-selection"
+									>
+										<span>{k}</span>
+										<span className="font-medium text-ink">{v}</span>
+									</Chip>
+								))}
+								<span className="ml-1 flex items-center gap-1 text-xs text-nezumi">
+									<Kbd>Enter</Kbd>
+									{t("list.create.hint")}
+								</span>
+							</div>
+						)}
+					</div>
+				</div>
+				<div className="@container min-h-0 flex-1 overflow-auto px-5 pb-6 max-md:px-3">
+					{loading ? (
+						<SkeletonRows />
+					) : error && rows.length === 0 ? (
+						<p role="alert" className="py-8 text-sm text-sash">
+							{t("list.error")}
+							{error.message}
+						</p>
+					) : rows.length === 0 ? (
+						review ? (
+							<EmptyState
+								icon={CircleCheck}
+								action={
+									<Button onClick={() => go({ view: undefined })}>
+										{t("review.toList")}
+									</Button>
+								}
+							>
+								{t("review.empty")}
+							</EmptyState>
+						) : q ? (
+							<EmptyState
+								icon={SearchX}
+								action={
+									<Button onClick={() => go({ q: undefined })}>
+										{t("list.clearSearch")}
+									</Button>
+								}
+							>
+								{t("list.noMatch")}
+							</EmptyState>
+						) : (
+							<EmptyState
+								icon={FilePlus2}
+								action={
+									<Button
+										kind="primary"
+										onClick={() => createRef.current?.focus()}
+									>
+										{t("list.createFirst")}
+									</Button>
+								}
+							>
+								{t("list.empty")}
+							</EmptyState>
+						)
+					) : (
+						<table className="w-full border-collapse text-sm max-md:block">
+							<thead className="max-md:hidden">
+								<tr className="text-left text-xs text-nezumi">
+									{COLS.map((c) => (
+										<th
+											key={c}
+											scope="col"
+											className={cx(
+												"sticky top-0 z-10 whitespace-nowrap border-b border-line-strong bg-paper px-3 py-2 font-medium",
+												c === "title" && "w-full",
+											)}
+										>
+											{t(`col.${c}`)}
+										</th>
+									))}
+								</tr>
+							</thead>
+							<tbody className="max-md:block">
+								{rows.map((row, i) => (
+									<Row
+										key={row.id}
+										row={row}
+										project={project}
+										me={me}
+										selected={i === sel}
+										open={row.ref === search.issue}
+										onOpen={() => {
+											setSel(i);
+											go({ issue: row.ref });
+										}}
+										onEdit={edit.mutate}
+									/>
+								))}
+							</tbody>
+						</table>
+					)}
+					{review && queue.truncated && (
+						<p className="mt-3 text-xs text-nezumi">{t("review.truncated")}</p>
+					)}
+					{!review && list.hasNextPage && (
+						<Button
+							className="mt-3"
+							onClick={() => list.fetchNextPage()}
+							disabled={list.isFetchingNextPage}
+						>
+							{t("list.more")}
+						</Button>
+					)}
+					<p className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-nezumi max-md:hidden pointer-coarse:hidden">
+						{(
+							[
+								[["C"], "key.create"],
+								[["J", "K"], "key.move"],
+								[["Enter"], "key.open"],
+								[["Esc"], "key.close"],
+								[["/"], "key.search"],
+							] as const
+						).map(([keys, k]) => (
+							<span key={k} className="flex items-center gap-1.5">
+								<span className="flex gap-0.5">
+									{keys.map((x) => (
+										<Kbd key={x}>{x}</Kbd>
+									))}
+								</span>
+								{t(k)}
+							</span>
+						))}
+					</p>
+				</div>
 			</section>
 			{search.issue && (
 				<IssuePanel

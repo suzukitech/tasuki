@@ -4,9 +4,17 @@ import { ApiError, api } from "../src/lib/api";
 import { mapPages, projectOf } from "../src/lib/cache";
 import { criteriaBody, critsOf, shown } from "../src/lib/draft";
 import { etagOf, writeError } from "../src/lib/etag";
+import {
+	hueOf,
+	initialOf,
+	relativeDue,
+	relativeTime,
+	splitSteps,
+	stepRefs,
+} from "../src/lib/format";
 import { keyAction, shouldHandleKey } from "../src/lib/keys";
 import { PRIORITY_KEYS } from "../src/lib/priority";
-import { buildCreate } from "../src/lib/quick";
+import { buildCreate, previewQuick } from "../src/lib/quick";
 import { turnOf } from "../src/lib/turn";
 import type { IssueRow, Page, Status } from "../src/lib/types";
 
@@ -234,4 +242,56 @@ test("priority options derive from PRIORITIES, in value order", () => {
 		"priority.urgent",
 	]);
 	for (const k of PRIORITY_KEYS) expect(t(k)).not.toBe(k);
+});
+
+describe("display helpers", () => {
+	const now = new Date(2026, 10, 27, 15);
+	test("relative due dates", () => {
+		expect(relativeDue("2026-11-27", now)).toEqual({
+			text: "今日",
+			late: false,
+		});
+		expect(relativeDue("2026-11-28", now).text).toBe("明日");
+		expect(relativeDue("2026-11-30", now).text).toBe("3日後");
+		expect(relativeDue("2026-11-25", now)).toEqual({
+			text: "2日超過",
+			late: true,
+		});
+		expect(relativeDue("2026-12-31", now).text).toBe("12月31日");
+	});
+	test("relative time", () => {
+		expect(relativeTime(now, now)).toBe("たった今");
+		expect(relativeTime(new Date(now.getTime() - 5 * 60_000), now)).toBe(
+			"5分前",
+		);
+		expect(relativeTime(new Date(now.getTime() - 3 * 3600_000), now)).toBe(
+			"3時間前",
+		);
+		expect(relativeTime(new Date(now.getTime() - 2 * 86400_000), now)).toBe(
+			"2日前",
+		);
+	});
+	test("avatar helpers are stable", () => {
+		expect(hueOf("abc")).toBe(hueOf("abc"));
+		expect(hueOf("abc")).toBeLessThan(360);
+		expect(initialOf("鈴木 康")).toBe("鈴");
+		expect(initialOf("ada")).toBe("A");
+	});
+	test("steps and step chips", () => {
+		expect(splitSteps("1. a\n2) b")).toEqual([
+			{ n: "1", text: "a" },
+			{ n: "2", text: "b" },
+		]);
+		expect(splitSteps("just text")).toBeNull();
+		expect(stepRefs("1, 2、4")).toEqual(["1", "2", "4"]);
+		expect(stepRefs(null)).toEqual([]);
+	});
+	test("quick-create preview matches what Enter sets", () => {
+		const members = [{ id: "u1", name: "Taro", role: "member" as const }];
+		const p = previewQuick("x @tar #a !urgent", members);
+		expect(p.assignee?.id).toBe("u1");
+		expect(p.labels).toEqual(["a"]);
+		expect(p.priority).toBe(4);
+		expect(previewQuick("x @nobody", members).assignee).toBeUndefined();
+	});
 });

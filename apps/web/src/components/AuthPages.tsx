@@ -1,39 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Navigate, useNavigate, useParams } from "@tanstack/react-router";
-import { type FormEvent, type ReactNode, useState } from "react";
+import { type FormEvent, useState } from "react";
 import { t } from "../i18n";
 import { ApiError, api } from "../lib/api";
-import { Button, inputCls } from "./ui";
-
-function Card({
-	title,
-	lead,
-	children,
-}: {
-	title: string;
-	lead?: string;
-	children: ReactNode;
-}) {
-	return (
-		<main className="mx-auto mt-16 w-full max-w-sm px-4">
-			<h1 className="mb-2 text-xl font-bold">{title}</h1>
-			{lead && <p className="mb-4 text-nezumi">{lead}</p>}
-			{children}
-		</main>
-	);
-}
-
-function Field({
-	label,
-	...p
-}: { label: string } & React.InputHTMLAttributes<HTMLInputElement>) {
-	return (
-		<label className="mb-3 block text-sm font-bold">
-			{label}
-			<input {...p} className={`${inputCls} mt-1 font-normal`} required />
-		</label>
-	);
-}
+import { Column, Field } from "./Form";
+import { Button } from "./ui";
 
 function useAuthForm(
 	run: (f: FormData) => Promise<void>,
@@ -69,6 +40,20 @@ const login = async (f: FormData) => {
 	});
 };
 
+type Errs = { email?: string; name?: string; password?: string };
+/** Client-side checks, so each problem shows under its own field. */
+const check = (f: FormData, register: boolean): Errs => {
+	const email = String(f.get("email") ?? "").trim();
+	const e: Errs = {};
+	if (!/^\S+@\S+$/.test(email)) e.email = t("auth.err.email");
+	if (register && !String(f.get("name") ?? "").trim())
+		e.name = t("auth.err.name");
+	const pw = String(f.get("password") ?? "");
+	if (!pw) e.password = t("auth.err.password");
+	else if (register && pw.length < 8) e.password = t("auth.err.short");
+	return e;
+};
+
 function Form(p: {
 	submit: (e: FormEvent<HTMLFormElement>) => void;
 	error: string;
@@ -76,30 +61,46 @@ function Form(p: {
 	name?: boolean;
 	label: string;
 }) {
+	const [errs, setErrs] = useState<Errs>({});
 	return (
-		<form onSubmit={p.submit}>
+		<form
+			noValidate
+			onSubmit={(e) => {
+				const found = check(new FormData(e.currentTarget), !!p.name);
+				setErrs(found);
+				if (Object.keys(found).length) return e.preventDefault();
+				p.submit(e);
+			}}
+		>
 			<Field
 				label={t("auth.email")}
 				name="email"
 				type="email"
 				autoComplete="username"
+				error={errs.email}
 			/>
 			{p.name && (
-				<Field label={t("auth.name")} name="name" autoComplete="name" />
+				<Field
+					label={t("auth.name")}
+					name="name"
+					autoComplete="name"
+					error={errs.name}
+				/>
 			)}
 			<Field
 				label={t("auth.password")}
 				name="password"
 				type="password"
-				minLength={p.name ? 8 : undefined}
+				hint={p.name ? t("auth.password.hint") : undefined}
 				autoComplete={p.name ? "new-password" : "current-password"}
+				error={errs.password ?? (p.error || undefined)}
 			/>
-			{p.error && (
-				<p role="alert" className="mb-3 text-sash">
-					{p.error}
-				</p>
-			)}
-			<Button type="submit" kind="primary" disabled={p.busy}>
+			<Button
+				type="submit"
+				kind="primary"
+				disabled={p.busy}
+				className="mt-2 h-10 w-full"
+			>
 				{p.label}
 			</Button>
 		</form>
@@ -114,9 +115,9 @@ export function LoginPage() {
 	const f = useAuthForm(login, "auth.login.fail");
 	if (status.data?.needsSetup) return <Navigate to="/setup" />;
 	return (
-		<Card title={t("auth.login.title")}>
+		<Column full title={t("auth.login.title")}>
 			<Form {...f} label={t("auth.login")} />
-		</Card>
+		</Column>
 	);
 }
 
@@ -136,16 +137,16 @@ export function SetupPage() {
 	if (status.isLoading) return null;
 	if (!status.data?.needsSetup)
 		return (
-			<Card title={t("auth.setup.title")} lead={t("auth.setup.done")}>
+			<Column full title={t("auth.setup.title")} lead={t("auth.setup.done")}>
 				<Link to="/login" className="text-ai-indigo underline">
 					{t("auth.login.title")}
 				</Link>
-			</Card>
+			</Column>
 		);
 	return (
-		<Card title={t("auth.setup.title")} lead={t("auth.setup.lead")}>
+		<Column full title={t("auth.setup.title")} lead={t("auth.setup.lead")}>
 			<Form {...f} name label={t("auth.setup.submit")} />
-		</Card>
+		</Column>
 	);
 }
 
@@ -161,8 +162,8 @@ export function InvitePage() {
 		await login(d);
 	}, "auth.invite.fail");
 	return (
-		<Card title={t("auth.invite.title")}>
+		<Column full title={t("auth.invite.title")}>
 			<Form {...f} name label={t("auth.invite.submit")} />
-		</Card>
+		</Column>
 	);
 }
