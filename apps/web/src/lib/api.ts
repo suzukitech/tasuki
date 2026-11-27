@@ -8,12 +8,12 @@ export class ApiError extends Error {
 	}
 }
 
-export const csrfToken = () =>
+const csrfToken = () =>
 	/(?:^|; )tasuki_csrf=([^;]*)/.exec(
 		typeof document === "undefined" ? "" : document.cookie,
 	)?.[1];
 
-/** JSON request to /api/v1. Errors arrive as problem+json and become ApiError. */
+/** Request to /api/v1: JSON, or a raw Blob/File sent as-is with its own content type. Errors arrive as problem+json and become ApiError. */
 export async function api<T>(
 	method: string,
 	path: string,
@@ -21,13 +21,18 @@ export async function api<T>(
 	headers: Record<string, string> = {},
 ): Promise<T> {
 	const h: Record<string, string> = { ...headers };
-	if (body !== undefined) h["content-type"] = "application/json";
+	const raw = body instanceof Blob;
+	if (raw) h["content-type"] = body.type;
+	else if (body !== undefined) h["content-type"] = "application/json";
 	const token = csrfToken();
 	if (token && method !== "GET") h["x-tasuki-csrf"] = token;
 	const res = await fetch(`/api/v1${path}`, {
 		method,
 		headers: h,
-		body: body === undefined ? undefined : JSON.stringify(body),
+		body:
+			raw || body === undefined
+				? (body as BodyInit | undefined)
+				: JSON.stringify(body),
 		credentials: "same-origin",
 	});
 	if (res.status === 204) return undefined as T;

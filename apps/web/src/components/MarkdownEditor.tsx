@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { t } from "../i18n";
 import { useWriteFailure } from "../lib/queries";
 import { markdownImage, uploadImage, uploadProblem } from "../lib/upload";
@@ -28,35 +28,55 @@ export function MarkdownEditor(p: {
 	const live = useRef(p.value);
 	live.current = p.value;
 
+	// uploads that finish after unmount must not touch the editor or toast
+	const alive = useRef(true);
+	useEffect(() => {
+		alive.current = true;
+		return () => {
+			alive.current = false;
+		};
+	}, []);
+
+	/** Upload the files one by one, each landing after the previous one at the caret. */
 	const attach = async (files: File[]) => {
-		const imgs = files.filter((f) => f.type.startsWith("image/"));
-		if (!imgs.length || !p.issueRef) return false;
-		for (const f of imgs) {
-			const problem = uploadProblem(f);
-			if (problem) {
-				toast(problem);
-				continue;
-			}
+		const problems = new Set<string>();
+		const ok: File[] = [];
+		for (const f of files) {
+			const why = uploadProblem(f);
+			if (why) problems.add(why);
+			else ok.push(f);
+		}
+		for (const why of problems) toast(why);
+		if (!ok.length) return;
+		if (!p.issueRef) return toast(t("editor.saveFirst"));
+		const el = ta.current;
+		let pos = el?.selectionStart ?? live.current.length;
+		let end = el?.selectionEnd ?? pos;
+		let inserted = 0;
+		for (const f of ok) {
 			setBusy((n) => n + 1);
 			try {
 				const up = await uploadImage(p.issueRef, f);
-				const el = ta.current;
-				const at = el?.selectionStart ?? live.current.length;
-				const end = el?.selectionEnd ?? at;
+				if (!alive.current) return;
 				const cur = live.current;
-				const md = markdownImage(f.name || up.filename, up.url);
-				const next = `${cur.slice(0, at)}${at > 0 && cur[at - 1] !== "\n" ? "\n" : ""}${md}\n${cur.slice(end)}`;
+				const at = Math.min(pos, cur.length);
+				const lead = at > 0 && cur[at - 1] !== "\n" ? "\n" : "";
+				const md = `${lead}${markdownImage(f.name || up.filename, up.url)}\n`;
+				const next = cur.slice(0, at) + md + cur.slice(Math.max(at, end));
 				live.current = next;
 				p.onChange(next);
-				toast(t("editor.uploaded"), "success");
+				pos = end = at + md.length;
+				inserted++;
 			} catch (e) {
-				fail(e);
+				if (alive.current) fail(e);
 			} finally {
 				setBusy((n) => n - 1);
 			}
 		}
-		return true;
+		if (inserted && alive.current) toast(t("editor.uploaded"), "success");
 	};
+
+	const hasFiles = (dt: DataTransfer) => dt.files.length > 0;
 
 	return (
 		<div>
@@ -73,7 +93,7 @@ export function MarkdownEditor(p: {
 						aria-pressed={preview === v}
 						onClick={() => setPreview(v)}
 						className={cx(
-							"-mb-px min-h-7 rounded-chip border-b-2 px-1 pointer-coarse:min-h-11",
+							"-mb-px min-h-7 rounded-chip border-b-2 px-1 pointer-coarse:min-h-11 pointer-coarse:min-w-11",
 							preview === v
 								? "border-ai-indigo font-medium text-ai-indigo"
 								: "border-transparent text-nezumi hover:text-ink",
@@ -114,23 +134,17 @@ export function MarkdownEditor(p: {
 					value={p.value}
 					onChange={(e) => p.onChange(e.target.value)}
 					onPaste={(e) => {
-						const files = [...e.clipboardData.files];
-						if (files.some((f) => f.type.startsWith("image/")) && p.issueRef) {
-							e.preventDefault();
-							void attach(files);
-						}
+						if (!hasFiles(e.clipboardData)) return;
+						e.preventDefault();
+						void attach([...e.clipboardData.files]);
 					}}
 					onDragOver={(e) => {
-						if (p.issueRef && e.dataTransfer.types.includes("Files"))
-							e.preventDefault();
+						if (e.dataTransfer.types.includes("Files")) e.preventDefault();
 					}}
 					onDrop={(e) => {
-						if (!p.issueRef) return;
-						const files = [...e.dataTransfer.files];
-						if (files.some((f) => f.type.startsWith("image/"))) {
-							e.preventDefault();
-							void attach(files);
-						}
+						if (!hasFiles(e.dataTransfer)) return;
+						e.preventDefault();
+						void attach([...e.dataTransfer.files]);
 					}}
 				/>
 			)}

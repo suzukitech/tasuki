@@ -1,5 +1,10 @@
 import type { ReactNode } from "react";
-import { type Block, type Inline, parseMarkdown } from "../lib/markdown";
+import {
+	type Block,
+	headingTag,
+	type Inline,
+	parseMarkdown,
+} from "../lib/markdown";
 
 function Inlines({ nodes }: { nodes: Inline[] }): ReactNode {
 	return nodes.map((n, i) => {
@@ -57,12 +62,16 @@ function Inlines({ nodes }: { nodes: Inline[] }): ReactNode {
 
 function BlockView({ b }: { b: Block }) {
 	switch (b.t) {
-		case "h":
+		case "h": {
+			const H = headingTag(b.level);
 			return (
-				<p className="mt-3 mb-1 font-semibold first:mt-0">
+				<H
+					className={`mt-3 mb-1 font-semibold first:mt-0 ${H === "h3" ? "text-[17px]" : "text-[15px]"}`}
+				>
 					<Inlines nodes={b.c} />
-				</p>
+				</H>
 			);
+		}
 		case "code":
 			return (
 				<pre className="my-2 overflow-x-auto rounded-control bg-paper p-2.5 text-sm leading-relaxed whitespace-pre">

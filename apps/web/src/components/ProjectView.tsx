@@ -16,6 +16,7 @@ import {
 	useMemo,
 	useRef,
 	useState,
+	useSyncExternalStore,
 } from "react";
 import { t } from "../i18n";
 import { api } from "../lib/api";
@@ -29,7 +30,6 @@ import {
 	useMe,
 	useProject,
 	useReviewQueue,
-	useTemplates,
 	useWriteFailure,
 } from "../lib/queries";
 import { buildCreate, previewQuick } from "../lib/quick";
@@ -74,6 +74,18 @@ const COLS = [
 	"due",
 	"turn",
 ] as const;
+
+const NARROW = "(max-width: 767px)";
+const useNarrow = () =>
+	useSyncExternalStore(
+		(cb) => {
+			const m = window.matchMedia(NARROW);
+			m.addEventListener("change", cb);
+			return () => m.removeEventListener("change", cb);
+		},
+		() => window.matchMedia(NARROW).matches,
+		() => false,
+	);
 
 const bare =
 	"bare min-w-0 flex-1 bg-transparent text-sm text-ink outline-none placeholder:text-nezumi ";
@@ -303,9 +315,8 @@ export function ProjectView({
 	const [sel, setSel] = useState(-1);
 	const [ai, setAi] = useState(true);
 	const [draft, setDraft] = useState("");
-	const [tpl, setTpl] = useState("");
-	const templates = useTemplates(projectKey).data ?? [];
 	const [searching, setSearching] = useState(false);
+	const narrow = useNarrow();
 	const createRef = useRef<HTMLInputElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
 	const go = useCallback(
@@ -350,8 +361,6 @@ export function ProjectView({
 		if (creating.current) return; // one POST at a time: a second Enter must not duplicate
 		const made = buildCreate(draft, ai, project.members);
 		if (!made) return;
-		const tplBody = templates.find((x) => x.id === tpl)?.bodyTemplateMd;
-		const body = tplBody ? { ...made, bodyMd: tplBody } : made;
 		creating.current = true;
 		const sent = draft;
 		setDraft(""); // cleared before the await; restored on failure
@@ -359,10 +368,9 @@ export function ProjectView({
 			await api(
 				"POST",
 				`/projects/${encodeURIComponent(projectKey)}/issues`,
-				body,
+				made,
 			);
 			qc.invalidateQueries({ queryKey: ["issues", projectKey] });
-			setTpl("");
 		} catch (x) {
 			setDraft((now) => now || sent);
 			fail(x);
@@ -431,6 +439,8 @@ export function ProjectView({
 								/>
 								<input
 									ref={searchRef}
+									id="issue-search"
+									name="q"
 									key={q}
 									defaultValue={q}
 									type="search"
@@ -479,8 +489,14 @@ export function ProjectView({
 							<input
 								ref={createRef}
 								data-quick-create
+								id="quick-create"
+								name="title"
 								aria-label={t("list.create.placeholder")}
-								placeholder={t("list.create.placeholder")}
+								placeholder={t(
+									narrow
+										? "list.create.placeholder.short"
+										: "list.create.placeholder",
+								)}
 								value={draft}
 								onChange={(e) => setDraft(e.target.value)}
 								onKeyDown={onCreate}
@@ -492,24 +508,6 @@ export function ProjectView({
 								onChange={setAi}
 								label={t("list.create.flow")}
 							/>
-							{templates.length > 0 && (
-								<Menu
-									label={t("tpl.pick")}
-									value={tpl}
-									options={[
-										{ value: "", label: t("tpl.none") },
-										...templates.map((x) => ({ value: x.id, label: x.name })),
-									]}
-									onChange={setTpl}
-									className="min-h-8 px-2 text-sm text-nezumi"
-								>
-									{tpl
-										? t("tpl.quick", {
-												name: templates.find((x) => x.id === tpl)?.name ?? "",
-											})
-										: t("tpl.pick")}
-								</Menu>
-							)}
 						</div>
 						{chips.length > 0 && (
 							<div

@@ -14,6 +14,9 @@ export type Block =
 	| { t: "quote"; c: Inline[] }
 	| { t: "list"; ordered: boolean; items: Inline[][] };
 
+/** Heading element for `#`..`###`: the panel title is h2, so body headings start at h3 (17px, then 15px). */
+export const headingTag = (level: number) => (level <= 1 ? "h3" : "h4");
+
 /** Links: http(s) only. */
 export const safeUrl = (u: string) => (/^https?:\/\//i.test(u) ? u : undefined);
 /**
@@ -23,8 +26,15 @@ export const safeUrl = (u: string) => (/^https?:\/\//i.test(u) ? u : undefined);
 export const safeImage = (u: string) =>
 	/^\/api\/v1\/attachments\/[\w-]+$/.test(u) ? u : undefined;
 
-const TOKEN =
-	/!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*/g;
+// A URL may hold one level of balanced parentheses: Wikipedia `Foo_(bar)`, and `javascript:alert(1)`
+// is swallowed whole (then refused by safeUrl) instead of leaving a stray ")". `*em*` needs the
+// start or a non-word character before its opening `*`, so `2*3*4` stays text.
+const URL_ = String.raw`((?:[^()\s]|\([^()\s]*\))+)`;
+const TOKEN = new RegExp(
+	String.raw`!\[([^\]]*)\]\(${URL_}\)|\[([^\]]+)\]\(${URL_}\)|` +
+		String.raw`\x60([^\x60]+)\x60|\*\*([^*]+)\*\*|(?<![A-Za-z0-9_])\*([^*\s][^*]*)\*`,
+	"g",
+);
 
 export function inline(src: string): Inline[] {
 	const out: Inline[] = [];

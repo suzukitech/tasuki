@@ -104,7 +104,7 @@ function CopyField({ label, value }: { label: string; value: string }) {
 					onFocus={(e) => e.currentTarget.select()}
 					className={cx(
 						inputCls,
-						"num h-9 min-w-0 flex-1 font-mono text-xs pointer-coarse:h-11",
+						"num h-9 min-w-0 flex-1 text-xs pointer-coarse:h-11",
 					)}
 				/>
 				<Button onClick={copy} aria-live="polite">
@@ -133,9 +133,7 @@ function Confirm(p: {
 				onClick={() => setAsking(true)}
 			/>
 		) : (
-			<Button kind="danger" onClick={() => setAsking(true)}>
-				{p.label}
-			</Button>
+			<Button onClick={() => setAsking(true)}>{p.label}</Button>
 		);
 	return (
 		<span className="flex flex-wrap items-center gap-2">
@@ -143,7 +141,6 @@ function Confirm(p: {
 				{p.ask}
 			</span>
 			<Button
-				kind="danger"
 				onClick={() => {
 					setAsking(false);
 					p.onYes();
@@ -679,9 +676,9 @@ function HookRow({ project, hook }: { project: ProjectDetail; hook: Webhook }) {
 	return (
 		<li className="space-y-2 py-3">
 			<div className="flex flex-wrap items-center gap-3">
-				<code className="min-w-0 flex-1 basis-48 truncate text-sm">
+				<span className="num min-w-0 flex-1 basis-48 truncate text-sm">
 					{hook.url}
-				</code>
+				</span>
 				<Button
 					disabled={sending}
 					onClick={async () => {
@@ -1033,7 +1030,7 @@ function ProjectSettings({ search }: { search: SettingsSearch }) {
 export function SettingsPage({ search }: { search: SettingsSearch }) {
 	const tab = search.section === "project" ? "project" : "tokens";
 	return (
-		<div className="h-full overflow-auto px-5 pt-4 pb-10 max-md:px-3">
+		<div className="relative h-full overflow-auto px-5 pt-4 pb-10 max-md:px-3">
 			<h1 className="mb-3 text-xl font-semibold">{t("nav.settings")}</h1>
 			<nav
 				aria-label={t("settings.sections")}

@@ -1,6 +1,6 @@
 import { ATTACHMENT_MAX, ATTACHMENT_TYPES } from "@tasuki/schema/pure";
 import { t } from "../i18n";
-import { ApiError, csrfToken } from "./api";
+import { api } from "./api";
 
 export type Uploaded = { id: string; filename: string; url: string };
 
@@ -17,26 +17,9 @@ export const markdownImage = (name: string, url: string) =>
 	`![${name.replace(/[[\]()\r\n]/g, "").trim() || "image"}](${url})`;
 
 /** Raw image bytes to the issue. Failures are ApiError (the caller shows them via writeError). */
-export async function uploadImage(ref: string, file: File): Promise<Uploaded> {
-	const token = csrfToken();
-	const res = await fetch(
-		`/api/v1/issues/${encodeURIComponent(ref)}/attachments?filename=${encodeURIComponent(file.name)}`,
-		{
-			method: "POST",
-			headers: {
-				"content-type": file.type,
-				...(token && { "x-tasuki-csrf": token }),
-			},
-			body: file,
-			credentials: "same-origin",
-		},
+export const uploadImage = (ref: string, file: File) =>
+	api<Uploaded>(
+		"POST",
+		`/issues/${encodeURIComponent(ref)}/attachments?filename=${encodeURIComponent(file.name)}`,
+		file,
 	);
-	const data = await res.json().catch(() => ({}));
-	if (!res.ok)
-		throw new ApiError(
-			res.status,
-			String(data.code ?? "error"),
-			String(data.detail ?? res.statusText),
-		);
-	return data as Uploaded;
-}

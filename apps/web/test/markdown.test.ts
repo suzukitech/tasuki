@@ -1,7 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { ApiError } from "../src/lib/api";
 import { writeError } from "../src/lib/etag";
-import { inline, parseMarkdown, safeImage, safeUrl } from "../src/lib/markdown";
+import {
+	headingTag,
+	inline,
+	parseMarkdown,
+	safeImage,
+	safeUrl,
+} from "../src/lib/markdown";
 import { markdownImage, uploadProblem } from "../src/lib/upload";
 
 describe("markdown is safe", () => {
@@ -13,6 +19,33 @@ describe("markdown is safe", () => {
 		expect(inline("[x](https://a.example)")).toEqual([
 			{ t: "link", href: "https://a.example", s: "x" },
 		]);
+	});
+
+	test('URLs may hold one level of parentheses; no stray ")"', () => {
+		expect(inline("[w](https://en.wikipedia.org/wiki/Foo_(bar)) end")).toEqual([
+			{ t: "link", href: "https://en.wikipedia.org/wiki/Foo_(bar)", s: "w" },
+			{ t: "text", s: " end" },
+		]);
+		expect(inline("[x](javascript:alert(1))")).toEqual([{ t: "text", s: "x" }]);
+		expect(inline("![p](javascript:alert(1))")).toEqual([
+			{ t: "text", s: "p" },
+		]);
+	});
+
+	test("em needs a start or non-word character before the opening *", () => {
+		expect(inline("2*3*4")).toEqual([{ t: "text", s: "2*3*4" }]);
+		expect(inline("a *b* c")[1]).toEqual({
+			t: "em",
+			c: [{ t: "text", s: "b" }],
+		});
+		expect(inline("*b*")[0]?.t).toBe("em");
+		expect(inline("これは*強調*です")[1]?.t).toBe("em");
+	});
+
+	test("headings are h3/h4 elements", () => {
+		expect(headingTag(1)).toBe("h3");
+		expect(headingTag(2)).toBe("h4");
+		expect(headingTag(3)).toBe("h4");
 	});
 
 	test("images: own attachments only; external images become links", () => {
@@ -74,7 +107,7 @@ describe("upload helpers", () => {
 	test("type and size are checked in Japanese", () => {
 		expect(uploadProblem({ type: "image/png", size: 100 })).toBeNull();
 		expect(uploadProblem({ type: "image/svg+xml", size: 100 })).toContain(
-			"形式",
+			"画像（PNG",
 		);
 		expect(
 			uploadProblem({ type: "image/png", size: 11 * 1024 * 1024 }),

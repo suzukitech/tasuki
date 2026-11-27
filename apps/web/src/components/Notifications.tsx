@@ -71,7 +71,7 @@ export function NotificationBell() {
 					id={id}
 					role="dialog"
 					aria-label={t("notif.title")}
-					className="pop absolute bottom-full left-0 z-40 mb-2 w-80 max-w-[calc(100vw-1.5rem)] rounded-panel border border-line bg-surface shadow-float max-md:top-full max-md:bottom-auto max-md:mt-2 max-md:mb-0 max-md:right-0 max-md:left-auto"
+					className="pop absolute bottom-full left-0 z-40 mb-2 w-80 rounded-panel border border-line bg-surface shadow-float max-md:fixed max-md:inset-x-3 max-md:top-[6.25rem] max-md:bottom-auto max-md:mb-0 max-md:w-auto"
 				>
 					<div className="flex items-center gap-2 border-b border-line px-3 py-2">
 						<h2 className="mr-auto text-sm font-semibold">
@@ -87,7 +87,7 @@ export function NotificationBell() {
 						</button>
 					</div>
 					{data?.items.length ? (
-						<ul className="max-h-96 overflow-auto py-1">
+						<ul className="max-h-96 overflow-auto py-1 max-md:max-h-[calc(100dvh-10rem)]">
 							{data.items.map((n) => (
 								<li key={n.id}>
 									<button
@@ -119,15 +119,18 @@ export function NotificationBell() {
 													{n.title}
 												</span>
 											</span>
-											<span className="block text-xs text-nezumi">
-												{t(`notif.${n.kind}`)}
-												{!n.readAt && (
-													<span className="sr-only">
-														（{t("notif.unread", { n: 1 })}）
-													</span>
-												)}
-												<span aria-hidden> ・ </span>
-												{relativeTime(n.createdAt)}
+											<span className="mt-0.5 flex items-baseline justify-between gap-3 text-xs text-nezumi">
+												<span>
+													{t(`notif.${n.kind}`)}
+													{!n.readAt && (
+														<span className="sr-only">
+															（{t("notif.unread", { n: 1 })}）
+														</span>
+													)}
+												</span>
+												<span className="num shrink-0">
+													{relativeTime(n.createdAt)}
+												</span>
 											</span>
 										</span>
 									</button>

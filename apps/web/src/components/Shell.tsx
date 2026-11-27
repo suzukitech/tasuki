@@ -210,7 +210,7 @@ export function AppLayout() {
 	if (me.isLoading) return null;
 	if (me.isError) return <Navigate to="/login" />;
 	return (
-		<div className="flex h-full flex-col md:flex-row">
+		<div className="flex h-full flex-col overflow-hidden md:flex-row">
 			<Nav projectKey={key} onPalette={() => setPalette(true)} />
 			<main className="min-h-0 min-w-0 flex-1">
 				<Outlet />
