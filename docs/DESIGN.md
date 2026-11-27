@@ -238,7 +238,7 @@ tasuki/
 | activities             | id, issue\_id, actor\_id, via, action, field, before, after, created\_at                                                                                                                               | 全変更の監査履歴                                                             |
 | api\_tokens            | id, user\_id, name, token\_hash, scopes, project\_ids, last\_used\_at, expires\_at, revoked\_at                                                                                                        | MCPとCLI用。project\_idsで操作できるプロジェクトを制限（nullなら全体）       |
 | saved\_views           | id, project\_id, owner\_id, name, query, layout(list/board), shared                                                                                                                                    | v0.2                                                                         |
-| attachments            | id, issue\_id, filename, size, content\_type, path, uploaded\_by                                                                                                                                      | ローカルディスク保存（画像のみ。v0.1。詳細は「Phase 6b-2」）                 |
+| attachments            | id, issue\_id, filename, size, content\_type, path, uploaded\_by                                                                                                                                       | ローカルディスク保存（画像のみ。v0.1。詳細は「Phase 6b-2」）                 |
 | sessions               | id, user\_id, token\_hash, expires\_at                                                                                                                                                                 | Web UIのログインセッション（HttpOnly Cookie）                                |
 | invites                | id, token\_hash, expires\_at, used\_at, created\_by                                                                                                                                                    | 招待リンクとパスワード再設定リンク（有効期限7日）                            |
 
@@ -667,4 +667,3 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 
 - `issue_templates`（名前、種別、本文の型、条件の型）をプロジェクト管理者がCRUDする（`GET/POST /projects/:key/templates`、`PATCH/DELETE /projects/:key/templates/:id`。管理者のみ、セッションのみ。一覧はメンバーも読める）。種別は任意。
 - 新規作成の入力欄から、テンプレートを選ぶと本文を埋める（クイック作成は1行入力なのでテンプレートの選択肢は出さない）。受け入れ条件の型（`criteria_template`）は今回は使わない。強制はしない。
-

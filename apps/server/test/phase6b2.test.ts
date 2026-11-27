@@ -51,7 +51,7 @@ async function world() {
 					...(who.csrf && { "x-tasuki-csrf": who.csrf }),
 					...extra,
 				},
-				body: bytes,
+				body: bytes as BodyInit,
 			},
 		);
 	return {
