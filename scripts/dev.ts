@@ -1,4 +1,6 @@
 // Server (:3000, watch) and Vite (:5173, proxies /api and /mcp to the server) in one terminal.
+// The browser talks to Vite, so the server must accept its origin (CSRF Origin check).
+process.env.TASUKI_BASE_URL ??= "http://localhost:5173";
 const run = (cmd: string[], cwd?: string) =>
 	Bun.spawn(cmd, { cwd, stdio: ["inherit", "inherit", "inherit"] });
 const procs = [
