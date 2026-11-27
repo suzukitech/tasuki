@@ -661,7 +661,7 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 
 - Tiptap（`@tiptap/react` + `starter-kit` + `extension-image` + `tiptap-markdown`）をバンドルに足すと、minify + gzip で約190 kB増える（Reactを除く。測定: 2026-11-27）。目安の150 kBを超え、現状のJSの総量（約150 kB gzip）の倍以上になるため採らない。
 - 代わりに、**Markdownのテキスト欄＋プレビューの切替＋画像の貼り付け・ドロップ**にする。保存は今までどおりMarkdown。Tiptap（見たまま編集）はv0.2以降で、遅延読み込みの別チャンクとして再検討する。
-- 表示側のMarkdownは自前の小さな変換（`lib/markdown.tsx`）でReact要素に直接変える。生のHTMLは解釈せず文字として出す。リンクは `http(s)` のみ（`safeUrl`）、画像は `/api/v1/attachments/` か `https` のみ。対応は見出し、段落、強調、インラインコード、コードブロック、箇条書き、引用、リンク、画像。
+- 表示側のMarkdownは自前の小さな変換（`lib/markdown.ts と components/Markdown.tsx`）でReact要素に直接変える。生のHTMLは解釈せず文字として出す。リンクは `http(s)` のみ（`safeUrl`）、画像は `/api/v1/attachments/`（このサーバーの添付）だけを `<img>` にする。外部の画像（https）は画像にせず、リンクの文字として出す（書いた人が追跡用の画像を仕込み、閲覧者のIPと閲覧時刻を取れてしまうため）。SPAの `index.html` には `Content-Security-Policy: img-src 'self' data:` も付ける。対応は見出し、段落、強調、インラインコード、コードブロック、箇条書き、引用、リンク、画像。
 
 ### テンプレート
 

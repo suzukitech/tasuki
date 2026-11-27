@@ -16,11 +16,12 @@ export type Block =
 
 /** Links: http(s) only. */
 export const safeUrl = (u: string) => (/^https?:\/\//i.test(u) ? u : undefined);
-/** Images: our own attachments, or https. Never http, data: or javascript:. */
+/**
+ * Inline images: our own attachments only. An external image would be a tracking pixel
+ * (it leaks the viewer's IP and view time to whoever wrote the comment), so it becomes a link.
+ */
 export const safeImage = (u: string) =>
-	/^\/api\/v1\/attachments\/[\w-]+$/.test(u) || /^https:\/\//i.test(u)
-		? u
-		: undefined;
+	/^\/api\/v1\/attachments\/[\w-]+$/.test(u) ? u : undefined;
 
 const TOKEN =
 	/!\[([^\]]*)\]\(([^)\s]+)\)|\[([^\]]+)\]\(([^)\s]+)\)|`([^`]+)`|\*\*([^*]+)\*\*|\*([^*\s][^*]*)\*/g;
@@ -34,7 +35,9 @@ export function inline(src: string): Inline[] {
 		last = (m.index ?? 0) + m[0].length;
 		if (m[2] !== undefined) {
 			const img = safeImage(m[2]);
+			const href = safeUrl(m[2]);
 			if (img) out.push({ t: "image", src: img, alt: m[1] ?? "" });
+			else if (href) out.push({ t: "link", href, s: m[1] || href });
 			else text(m[1] || m[0]);
 		} else if (m[4] !== undefined) {
 			const href = safeUrl(m[4]);

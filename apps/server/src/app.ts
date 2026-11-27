@@ -759,6 +759,8 @@ export function createApp(
 						headers: {
 							"content-type": "text/html; charset=utf-8",
 							"cache-control": "no-cache",
+							// belt and braces for the markdown renderer: no image from another origin
+							"content-security-policy": "img-src 'self' data:",
 						},
 					})
 				: c.notFound();

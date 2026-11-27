@@ -10,10 +10,17 @@ import {
 	useMe,
 	useProject,
 	useProjects,
+	useTemplates,
 	useWriteFailure,
 } from "../lib/queries";
 import { expiryIso, type TokenRow, tokenView } from "../lib/settings";
-import type { Project, ProjectDetail, Role } from "../lib/types";
+import type {
+	Project,
+	ProjectDetail,
+	Role,
+	Template,
+	Webhook,
+} from "../lib/types";
 import { Field } from "./Form";
 import {
 	Avatar,
@@ -650,6 +657,315 @@ function StatusRow({
 	);
 }
 
+/* ---------- project: webhooks ---------- */
+
+const HOOK_EVENTS = [
+	"plan.submitted",
+	"report.submitted",
+	"question.asked",
+	"question.answered",
+	"issue.assigned",
+	"issue.completed",
+] as const;
+
+function HookRow({ project, hook }: { project: ProjectDetail; hook: Webhook }) {
+	const run = useRun();
+	const base = `/projects/${encodeURIComponent(project.key)}/webhooks/${encodeURIComponent(hook.id)}`;
+	const [sending, setSending] = useState(false);
+	const [result, setResult] = useState<{ ok: boolean; text: string } | null>(
+		null,
+	);
+	const fail = useWriteFailure();
+	return (
+		<li className="space-y-2 py-3">
+			<div className="flex flex-wrap items-center gap-3">
+				<code className="min-w-0 flex-1 basis-48 truncate text-sm">
+					{hook.url}
+				</code>
+				<Button
+					disabled={sending}
+					onClick={async () => {
+						setSending(true);
+						setResult(null);
+						try {
+							const r = await api<{ ok: boolean; reason?: string }>(
+								"POST",
+								`${base}/test`,
+							);
+							setResult({
+								ok: r.ok,
+								text: r.ok
+									? t("hook.test.ok")
+									: r.reason === "blocked"
+										? t("hook.test.blocked")
+										: t("hook.test.failed"),
+							});
+						} catch (e) {
+							fail(e, { prefix: t("settings.fail") });
+						} finally {
+							setSending(false);
+						}
+					}}
+				>
+					{sending ? t("hook.testing") : t("hook.test")}
+				</Button>
+				<Confirm
+					label={t("hook.delete")}
+					ask={t("hook.delete.ask")}
+					yes={t("hook.delete.yes")}
+					onYes={() =>
+						run(() => api("DELETE", base), t("hook.deleted"), [
+							["webhooks", project.key],
+						])
+					}
+				/>
+			</div>
+			<div className="flex flex-wrap gap-1.5">
+				{hook.events.map((e) => (
+					<Chip key={e}>
+						{t(`hook.event.${e as (typeof HOOK_EVENTS)[number]}`)}
+					</Chip>
+				))}
+			</div>
+			{result && (
+				<p
+					role="status"
+					className={cx("text-sm", result.ok ? "text-done" : "text-sash")}
+				>
+					{result.text}
+				</p>
+			)}
+		</li>
+	);
+}
+
+function Webhooks({ project }: { project: ProjectDetail }) {
+	const run = useRun();
+	const list = useQuery({
+		queryKey: ["webhooks", project.key],
+		queryFn: () =>
+			api<Webhook[]>(
+				"GET",
+				`/projects/${encodeURIComponent(project.key)}/webhooks`,
+			),
+	});
+	const [url, setUrl] = useState("");
+	const [events, setEvents] = useState<string[]>([
+		"plan.submitted",
+		"report.submitted",
+		"question.asked",
+	]);
+	return (
+		<div className={card}>
+			<H3>{t("hook.title")}</H3>
+			<p className="mb-2 max-w-[68ch] text-sm text-nezumi">{t("hook.lead")}</p>
+			{list.data?.length ? (
+				<ul className="divide-y divide-line">
+					{list.data.map((h) => (
+						<HookRow key={h.id} project={project} hook={h} />
+					))}
+				</ul>
+			) : (
+				!list.isLoading && (
+					<p className="text-sm text-nezumi">{t("hook.empty")}</p>
+				)
+			)}
+			<form
+				className="mt-4 space-y-3 border-t border-line pt-4"
+				onSubmit={async (e) => {
+					e.preventDefault();
+					if (
+						await run(
+							() =>
+								api(
+									"POST",
+									`/projects/${encodeURIComponent(project.key)}/webhooks`,
+									{ url: url.trim(), events },
+								),
+							t("hook.added"),
+							[["webhooks", project.key]],
+						)
+					)
+						setUrl("");
+				}}
+			>
+				<Field
+					label={t("hook.url")}
+					hint={t("hook.url.hint")}
+					type="url"
+					autoComplete="off"
+					value={url}
+					onChange={(e) => setUrl(e.target.value)}
+					required
+				/>
+				<fieldset>
+					<legend className="mb-1 text-sm font-medium">
+						{t("hook.events")}
+					</legend>
+					<div className="flex flex-wrap gap-x-4 gap-y-1">
+						{HOOK_EVENTS.map((ev) => (
+							<label
+								key={ev}
+								className="flex min-h-8 items-center gap-1.5 text-sm pointer-coarse:min-h-11"
+							>
+								<input
+									type="checkbox"
+									checked={events.includes(ev)}
+									onChange={(e) =>
+										setEvents((cur) =>
+											e.target.checked
+												? [...cur, ev]
+												: cur.filter((x) => x !== ev),
+										)
+									}
+								/>
+								{t(`hook.event.${ev}`)}
+							</label>
+						))}
+					</div>
+				</fieldset>
+				<Button type="submit" disabled={!url.trim() || events.length === 0}>
+					{t("hook.add")}
+				</Button>
+			</form>
+		</div>
+	);
+}
+
+/* ---------- project: templates ---------- */
+
+function TemplateForm(p: {
+	project: ProjectDetail;
+	tpl?: Template;
+	onDone: () => void;
+}) {
+	const run = useRun();
+	const [name, setName] = useState(p.tpl?.name ?? "");
+	const [body, setBody] = useState(p.tpl?.bodyTemplateMd ?? "");
+	const id = useId();
+	return (
+		<form
+			className="space-y-3"
+			onSubmit={async (e) => {
+				e.preventDefault();
+				const base = `/projects/${encodeURIComponent(p.project.key)}/templates`;
+				const ok = await run(
+					() =>
+						p.tpl
+							? api("PATCH", `${base}/${encodeURIComponent(p.tpl.id)}`, {
+									name: name.trim(),
+									bodyTemplateMd: body,
+								})
+							: api("POST", base, { name: name.trim(), bodyTemplateMd: body }),
+					t(p.tpl ? "settings.saved" : "tpl.added"),
+					[["templates", p.project.key]],
+				);
+				if (ok) {
+					if (!p.tpl) {
+						setName("");
+						setBody("");
+					}
+					p.onDone();
+				}
+			}}
+		>
+			<Field
+				label={t("tpl.name")}
+				value={name}
+				maxLength={100}
+				onChange={(e) => setName(e.target.value)}
+				required
+			/>
+			<div>
+				<label htmlFor={id} className="mb-1 block text-sm font-medium">
+					{t("tpl.body")}
+				</label>
+				<textarea
+					id={id}
+					rows={6}
+					className={cx(inputCls, "leading-relaxed")}
+					value={body}
+					onChange={(e) => setBody(e.target.value)}
+				/>
+			</div>
+			<div className="flex gap-2">
+				<Button type="submit" disabled={!name.trim()}>
+					{p.tpl ? t("settings.save") : t("tpl.add")}
+				</Button>
+				{p.tpl && <Button onClick={p.onDone}>{t("gate.cancel")}</Button>}
+			</div>
+		</form>
+	);
+}
+
+function Templates({
+	project,
+	canEdit,
+}: {
+	project: ProjectDetail;
+	canEdit: boolean;
+}) {
+	const run = useRun();
+	const list = useTemplates(project.key).data ?? [];
+	const [editing, setEditing] = useState<string | null>(null);
+	return (
+		<div className={card}>
+			<H3>{t("tpl.title")}</H3>
+			<p className="mb-2 max-w-[68ch] text-sm text-nezumi">{t("tpl.lead")}</p>
+			{list.length === 0 && (
+				<p className="text-sm text-nezumi">{t("tpl.empty")}</p>
+			)}
+			<ul className="divide-y divide-line">
+				{list.map((x) => (
+					<li key={x.id} className="py-3">
+						{editing === x.id ? (
+							<TemplateForm
+								project={project}
+								tpl={x}
+								onDone={() => setEditing(null)}
+							/>
+						) : (
+							<div className="flex flex-wrap items-center gap-3">
+								<span className="min-w-0 flex-1 basis-40 truncate font-medium">
+									{x.name}
+								</span>
+								{canEdit && (
+									<>
+										<Button onClick={() => setEditing(x.id)}>
+											{t("tpl.edit")}
+										</Button>
+										<Confirm
+											label={t("tpl.delete")}
+											ask={t("tpl.delete.ask")}
+											yes={t("tpl.delete.yes")}
+											onYes={() =>
+												run(
+													() =>
+														api(
+															"DELETE",
+															`/projects/${encodeURIComponent(project.key)}/templates/${encodeURIComponent(x.id)}`,
+														),
+													t("tpl.deleted"),
+													[["templates", project.key]],
+												)
+											}
+										/>
+									</>
+								)}
+							</div>
+						)}
+					</li>
+				))}
+			</ul>
+			{canEdit && editing === null && (
+				<div className="mt-4 border-t border-line pt-4">
+					<TemplateForm project={project} onDone={() => {}} />
+				</div>
+			)}
+		</div>
+	);
+}
+
 function ProjectSettings({ search }: { search: SettingsSearch }) {
 	const nav = useNavigate();
 	const me = useMe().data;
@@ -706,7 +1022,8 @@ function ProjectSettings({ search }: { search: SettingsSearch }) {
 							/>
 						))}
 					</div>
-					<p className="text-xs text-nezumi">{t("project.templates.later")}</p>
+					<Templates project={detail} canEdit={canEdit} />
+					{canEdit && <Webhooks project={detail} />}
 				</>
 			)}
 		</section>

@@ -30,6 +30,7 @@ import {
 	useReviewQueue,
 } from "../lib/queries";
 import { CommandPalette } from "./CommandPalette";
+import { NotificationBell } from "./Notifications";
 import { Avatar, cx, IconButton, iconProps, Kbd, Menu } from "./ui";
 
 const link =
@@ -89,6 +90,7 @@ function Nav({
 				<span className="max-w-24 truncate text-sm max-md:hidden md:max-w-none md:flex-1">
 					{me.data?.name}
 				</span>
+				<NotificationBell />
 				<IconButton
 					icon={LogOut}
 					label={t("nav.logout")}
