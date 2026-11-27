@@ -120,7 +120,7 @@ describe("uploadImage", () => {
 				`/api/v1/issues/WEB-1/attachments?filename=${encodeURIComponent("画面.png")}`,
 			);
 			expect(
-				(seen?.init.headers as Record<string, string>)["content-type"],
+				((seen?.init.headers ?? {}) as Record<string, string>)["content-type"],
 			).toBe("image/png");
 			expect(seen?.init.body).toBe(file);
 		} finally {
