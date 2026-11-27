@@ -8,6 +8,7 @@ import {
 	useSearch,
 } from "@tanstack/react-router";
 import { InvitePage, LoginPage, SetupPage } from "./components/AuthPages";
+import { NewProject } from "./components/NewProject";
 import { type ListSearch, ProjectView } from "./components/ProjectView";
 import { AppLayout } from "./components/Shell";
 import { t } from "./i18n";
@@ -42,7 +43,7 @@ function Home() {
 	const first = projects.data?.[0];
 	if (first)
 		return <Navigate to="/p/$key" params={{ key: first.key }} replace />;
-	return <p className="p-6 text-nezumi">{t("home.empty")}</p>;
+	return <NewProject lead={t("home.empty")} />;
 }
 const home = createRoute({
 	getParentRoute: () => app,
@@ -67,6 +68,11 @@ const list = createRoute({
 const Soon = ({ k }: { k: "board.soon" | "settings.soon" }) => (
 	<p className="p-6 text-nezumi">{t(k)}</p>
 );
+const newProject = createRoute({
+	getParentRoute: () => app,
+	path: "/new",
+	component: () => <NewProject />,
+});
 const board = createRoute({
 	getParentRoute: () => app,
 	path: "/p/$key/board",
@@ -82,7 +88,7 @@ const tree = root.addChildren([
 	setup,
 	login,
 	invite,
-	app.addChildren([home, list, board, settings]),
+	app.addChildren([home, newProject, list, board, settings]),
 ]);
 export const router = createRouter({ routeTree: tree });
 declare module "@tanstack/react-router" {

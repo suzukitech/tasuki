@@ -1,12 +1,8 @@
+import type { Category } from "@tasuki/schema/pure";
+
+export type { Category };
 // Response shapes of apps/server (hand-written: the Hono routes are not chained, so AppType carries no types).
 export type Role = "manager" | "member" | "viewer";
-export type Category =
-	| "draft"
-	| "ready"
-	| "plan_review"
-	| "in_progress"
-	| "impl_review"
-	| "done";
 export type Me = {
 	id: string;
 	email: string;
@@ -23,7 +19,7 @@ export type Status = {
 };
 export type Member = { id: string; name: string; role: Role };
 export type ProjectDetail = Project & { statuses: Status[]; members: Member[] };
-export type IssueRow = {
+export type IssueCore = {
 	id: string;
 	ref: string;
 	number: number;
@@ -37,7 +33,9 @@ export type IssueRow = {
 	flow: "ai" | "simple";
 	updatedAt: string;
 };
-export type Issue = IssueRow & {
+/** A list row also carries its label names. */
+export type IssueRow = IssueCore & { labels: string[] };
+export type Issue = IssueCore & {
 	bodyMd: string;
 	skipPlanReview: boolean;
 };

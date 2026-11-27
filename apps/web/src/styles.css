@@ -83,3 +83,7 @@ body {
 		animation: none;
 	}
 }
+
+input[type="checkbox"] {
+	accent-color: var(--indigo);
+}

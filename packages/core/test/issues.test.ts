@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { activities, issues } from "@tasuki/db";
+import { parseQuickTitle, reviewerOf, whoseTurn } from "@tasuki/schema";
 import { eq } from "drizzle-orm";
 import {
 	addComment,
@@ -7,10 +8,8 @@ import {
 	createProject,
 	getIssue,
 	loadIssue,
-	parseQuickTitle,
 	type TasukiError,
 	updateIssue,
-	whoseTurn,
 } from "../src/index";
 import { setup } from "./fixture";
 
@@ -204,6 +203,11 @@ describe("comments / getIssue / misc", () => {
 		).toBe("you");
 		expect(whoseTurn({ ...base, category: "done" }, "a")).toBeNull();
 	});
+});
+
+test("reviewerOf: approver, else the requester", () => {
+	expect(reviewerOf({ approverId: "a", reporterId: "r" })).toBe("a");
+	expect(reviewerOf({ approverId: null, reporterId: "r" })).toBe("r");
 });
 
 describe("parseQuickTitle", () => {

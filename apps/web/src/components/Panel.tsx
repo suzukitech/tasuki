@@ -1,9 +1,13 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { reviewerOf } from "@tasuki/schema/pure";
 import { type ReactNode, useState } from "react";
 import { type Key, t } from "../i18n";
 import { api } from "../lib/api";
+import { type CritDraft, criteriaBody, critsOf, shown } from "../lib/draft";
 import { etagOf } from "../lib/etag";
-import { useIssue, useWriteFailure } from "../lib/queries";
+import { PRIORITY_KEYS } from "../lib/priority";
+import { refreshIssue, useIssue, useWriteFailure } from "../lib/queries";
+import { turnOf } from "../lib/turn";
 import type {
 	Activity,
 	IssueDetail,
@@ -11,18 +15,10 @@ import type {
 	ProjectDetail,
 	Report,
 } from "../lib/types";
-import { Button, cx, inputCls } from "./ui";
+import { Button, cx, inputCls, TurnBadge } from "./ui";
 
 type Tab = "request" | "plan" | "report" | "thread";
 const TABS: Tab[] = ["request", "plan", "report", "thread"];
-const PRIORITY_KEYS = [
-	"priority.none",
-	"priority.low",
-	"priority.medium",
-	"priority.high",
-	"priority.urgent",
-] as const;
-
 /** Run a write against the open issue, refresh it, and toast failures (412 refetches everything). */
 function useAct(ref: string) {
 	const qc = useQueryClient();
@@ -30,12 +26,11 @@ function useAct(ref: string) {
 	return useMutation({
 		mutationFn: (f: () => Promise<unknown>) => f(),
 		onError: fail,
-		onSettled: () => {
-			qc.invalidateQueries({ queryKey: ["issue", ref] });
-			qc.invalidateQueries({ queryKey: ["issues"] });
-		},
+		// returned, so per-call onSuccess runs after the refetch has landed
+		onSettled: () => refreshIssue(qc, ref),
 	});
 }
+type Act = ReturnType<typeof useAct>;
 
 const H = ({ children }: { children: ReactNode }) => (
 	<h3 className="mt-4 mb-1 text-sm font-bold text-nezumi">{children}</h3>
@@ -48,7 +43,7 @@ const Text = ({ children }: { children: string }) => (
 const canReview = (d: IssueDetail, me: Me) =>
 	me.role === "admin" ||
 	d.project.role === "manager" ||
-	me.id === (d.issue.approverId ?? d.issue.reporterId);
+	me.id === reviewerOf(d.issue);
 
 export function viaLabel(via: string): string {
 	const known = `via.${via}` as Key;
@@ -98,16 +93,23 @@ function RequestTab({
 }) {
 	const act = useAct(d.ref);
 	const i = d.issue;
-	const [title, setTitle] = useState(i.title);
-	const [body, setBody] = useState(i.bodyMd);
-	const [crit, setCrit] = useState(
-		d.criteria.map((c) => ({ id: c.id as string | undefined, text: c.text })),
-	);
-	const save = (patch: Record<string, unknown>) =>
-		act.mutate(() =>
-			api("PATCH", `/issues/${d.ref}`, patch, {
-				"if-match": etagOf(i.updatedAt),
-			}),
+	// Drafts: undefined = untouched, so the field follows the server; typed text survives refetches.
+	const [draft, setDraft] = useState<{
+		title?: string;
+		body?: string;
+		crit?: CritDraft[];
+	}>({});
+	const title = shown(draft.title, i.title);
+	const body = shown(draft.body, i.bodyMd);
+	const crit = shown(draft.crit, critsOf(d.criteria));
+	const setCrit = (c: CritDraft[]) => setDraft((x) => ({ ...x, crit: c }));
+	const save = (patch: Record<string, unknown>, onSuccess?: () => void) =>
+		act.mutate(
+			() =>
+				api("PATCH", `/issues/${d.ref}`, patch, {
+					"if-match": etagOf(i.updatedAt),
+				}),
+			{ onSuccess },
 		);
 	const sel = "rounded border border-line bg-surface px-2 py-1 text-base";
 	return (
@@ -119,7 +121,7 @@ function RequestTab({
 				id="f-title"
 				className={inputCls}
 				value={title}
-				onChange={(e) => setTitle(e.target.value)}
+				onChange={(e) => setDraft((x) => ({ ...x, title: e.target.value }))}
 			/>
 			<label
 				className="mt-3 block text-sm font-bold text-nezumi"
@@ -132,7 +134,7 @@ function RequestTab({
 				rows={8}
 				className={inputCls}
 				value={body}
-				onChange={(e) => setBody(e.target.value)}
+				onChange={(e) => setDraft((x) => ({ ...x, body: e.target.value }))}
 			/>
 			<Button
 				kind="primary"
@@ -142,7 +144,15 @@ function RequestTab({
 					!title.trim() ||
 					(title === i.title && body === i.bodyMd)
 				}
-				onClick={() => save({ title: title.trim(), bodyMd: body })}
+				onClick={() =>
+					save({ title: title.trim(), bodyMd: body }, () =>
+						setDraft((x) => ({
+							...x,
+							title: x.title === title ? undefined : x.title,
+							body: x.body === body ? undefined : x.body,
+						})),
+					)
+				}
 			>
 				{t("req.save")}
 			</Button>
@@ -224,18 +234,15 @@ function RequestTab({
 					kind="primary"
 					disabled={act.isPending}
 					onClick={() =>
-						act.mutate(() =>
-							api(
-								"PUT",
-								`/issues/${d.ref}/criteria`,
-								crit
-									.filter((c) => c.text.trim())
-									.map((c) =>
-										c.id
-											? { id: c.id, text: c.text.trim() }
-											: { text: c.text.trim() },
+						act.mutate(
+							() => api("PUT", `/issues/${d.ref}/criteria`, criteriaBody(crit)),
+							// the refetched criteria (with their ids) replace the draft: a second save keeps the ids
+							{
+								onSuccess: () =>
+									setDraft((x) =>
+										x.crit === crit ? { ...x, crit: undefined } : x,
 									),
-							),
+							},
 						)
 					}
 				>
@@ -285,6 +292,40 @@ function NoteAction(p: {
 			{!note.trim() && (
 				<p className="mt-1 text-sm text-nezumi">{t("plan.note.required")}</p>
 			)}
+		</div>
+	);
+}
+
+/** Approve / return block shared by the plan and report tabs (the human gates). */
+function Gate(p: {
+	act: Act;
+	issueRef: string;
+	approve: { label: string; path: string };
+	reject: { label: string; placeholder: string; path: string };
+}) {
+	return (
+		<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
+			<Button
+				kind="primary"
+				disabled={p.act.isPending}
+				onClick={() =>
+					p.act.mutate(() =>
+						api("POST", `/issues/${p.issueRef}${p.approve.path}`),
+					)
+				}
+			>
+				{p.approve.label}
+			</Button>
+			<NoteAction
+				label={p.reject.label}
+				placeholder={p.reject.placeholder}
+				busy={p.act.isPending}
+				onSubmit={(note) =>
+					p.act.mutate(() =>
+						api("POST", `/issues/${p.issueRef}${p.reject.path}`, { note }),
+					)
+				}
+			/>
 		</div>
 	);
 }
@@ -343,27 +384,16 @@ function PlanTab({ d, me }: { d: IssueDetail; me: Me }) {
 				</>
 			)}
 			{gate && (
-				<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
-					<Button
-						kind="primary"
-						disabled={act.isPending}
-						onClick={() =>
-							act.mutate(() => api("POST", `/issues/${d.ref}/plan/approve`))
-						}
-					>
-						{t("plan.approve")}
-					</Button>
-					<NoteAction
-						label={t("plan.reject")}
-						placeholder={t("plan.note")}
-						busy={act.isPending}
-						onSubmit={(note) =>
-							act.mutate(() =>
-								api("POST", `/issues/${d.ref}/plan/reject`, { note }),
-							)
-						}
-					/>
-				</div>
+				<Gate
+					act={act}
+					issueRef={d.ref}
+					approve={{ label: t("plan.approve"), path: "/plan/approve" }}
+					reject={{
+						label: t("plan.reject"),
+						placeholder: t("plan.note"),
+						path: "/plan/reject",
+					}}
+				/>
 			)}
 		</div>
 	);
@@ -431,27 +461,16 @@ function ReportTab({ d, me }: { d: IssueDetail; me: Me }) {
 				</>
 			)}
 			{gate && (
-				<div className="mt-5 flex flex-wrap gap-2 border-t border-line pt-4">
-					<Button
-						kind="primary"
-						disabled={act.isPending}
-						onClick={() =>
-							act.mutate(() => api("POST", `/issues/${d.ref}/complete`))
-						}
-					>
-						{t("report.complete")}
-					</Button>
-					<NoteAction
-						label={t("report.return")}
-						placeholder={t("report.note")}
-						busy={act.isPending}
-						onSubmit={(note) =>
-							act.mutate(() =>
-								api("POST", `/issues/${d.ref}/report/return`, { note }),
-							)
-						}
-					/>
-				</div>
+				<Gate
+					act={act}
+					issueRef={d.ref}
+					approve={{ label: t("report.complete"), path: "/complete" }}
+					reject={{
+						label: t("report.return"),
+						placeholder: t("report.note"),
+						path: "/report/return",
+					}}
+				/>
 			)}
 		</div>
 	);
@@ -557,12 +576,14 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 				kind="primary"
 				className="mt-2"
 				disabled={act.isPending || !text.trim()}
-				onClick={() => {
-					act.mutate(() =>
-						api("POST", `/issues/${d.ref}/comments`, { bodyMd: text.trim() }),
-					);
-					setText("");
-				}}
+				onClick={() =>
+					act.mutate(
+						() =>
+							api("POST", `/issues/${d.ref}/comments`, { bodyMd: text.trim() }),
+						// keep the text if the post fails
+						{ onSuccess: () => setText("") },
+					)
+				}
 			>
 				{t("thread.comment.submit")}
 			</Button>
@@ -606,7 +627,17 @@ export function IssuePanel(p: {
 				<div className="min-w-0 flex-1">
 					<span className="num text-sm text-nezumi">{p.refId}</span>
 					<p className="truncate text-lg font-bold">{d?.issue.title}</p>
-					{d && <span className="text-sm text-nezumi">{d.statusName}</span>}
+					{d && (
+						<div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+							<span className="text-sm text-nezumi">{d.statusName}</span>
+							<TurnBadge turn={turnOf(d.issue, p.project.statuses, p.me.id)} />
+							{d.labels.map((l) => (
+								<span key={l} className="text-xs text-nezumi">
+									#{l}
+								</span>
+							))}
+						</div>
+					)}
 				</div>
 				<Button aria-label={t("panel.close")} onClick={p.onClose}>
 					{t("panel.close")}
@@ -638,9 +669,7 @@ export function IssuePanel(p: {
 						{t("panel.error")}
 					</p>
 				)}
-				{d && current === "request" && (
-					<RequestTab key={d.issue.updatedAt} d={d} project={p.project} />
-				)}
+				{d && current === "request" && <RequestTab d={d} project={p.project} />}
 				{d && current === "plan" && <PlanTab d={d} me={p.me} />}
 				{d && current === "report" && <ReportTab d={d} me={p.me} />}
 				{d && current === "thread" && <ThreadTab d={d} project={p.project} />}

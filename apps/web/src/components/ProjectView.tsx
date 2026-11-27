@@ -2,6 +2,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import {
 	type KeyboardEvent,
+	useCallback,
 	useEffect,
 	useMemo,
 	useRef,
@@ -10,6 +11,7 @@ import {
 import { t } from "../i18n";
 import { api } from "../lib/api";
 import { keyAction } from "../lib/keys";
+import { PRIORITY_KEYS } from "../lib/priority";
 import {
 	issueQuery,
 	useInlineEdit,
@@ -26,14 +28,6 @@ import { IssuePanel } from "./Panel";
 import { Button, cx, inputCls, TurnBadge } from "./ui";
 
 export type ListSearch = { issue?: string; q?: string; view?: "review" };
-
-const PRIORITY_KEYS = [
-	"priority.none",
-	"priority.low",
-	"priority.medium",
-	"priority.high",
-	"priority.urgent",
-] as const;
 
 type Col = "status" | "assignee" | "priority";
 
@@ -54,7 +48,9 @@ function Row(p: {
 		if (p.selected) ref.current?.scrollIntoView({ block: "nearest" });
 	}, [p.selected]);
 	const assignee = project.members.find((m) => m.id === row.assigneeId);
-	const cell = "border-b border-line px-2 py-1 align-middle";
+	// one line per cell on desktop; on a phone each row stacks (ref + title, then the small facts)
+	const cell =
+		"whitespace-nowrap border-b border-line px-2 py-1 align-middle max-md:border-0 max-md:p-0 max-md:text-sm";
 	const edit = (
 		col: Col,
 		label: string,
@@ -99,15 +95,18 @@ function Row(p: {
 				qc.prefetchQuery({ ...issueQuery(row.ref), staleTime: 10_000 })
 			}
 			className={cx(
-				"bg-surface hover:bg-paper",
+				"bg-surface hover:bg-paper max-md:flex max-md:flex-wrap max-md:items-center max-md:gap-x-3 max-md:gap-y-1 max-md:border-b max-md:border-line max-md:py-2",
 				p.selected && "outline outline-2 -outline-offset-2 outline-ai-indigo",
 				p.open && "bg-paper",
 			)}
 		>
-			<td className={cx(cell, "num whitespace-nowrap text-nezumi")}>
-				{row.ref}
-			</td>
-			<td className={cell}>
+			<td className={cx(cell, "num text-nezumi")}>{row.ref}</td>
+			<td
+				className={cx(
+					cell,
+					"whitespace-normal md:w-full max-md:min-w-0 max-md:grow max-md:basis-0 max-md:text-base",
+				)}
+			>
 				<button
 					type="button"
 					className="text-left font-bold text-ai-indigo"
@@ -115,7 +114,14 @@ function Row(p: {
 				>
 					{row.title}
 				</button>
+				{row.labels.map((l) => (
+					<span key={l} className="ml-2 whitespace-nowrap text-xs text-nezumi">
+						#{l}
+					</span>
+				))}
 			</td>
+			{/* line break between the two lines of the stacked (phone) row */}
+			<td aria-hidden className="hidden max-md:block max-md:basis-full" />
 			<td className={cell}>
 				{edit(
 					"status",
@@ -147,7 +153,9 @@ function Row(p: {
 					(v) => p.onEdit({ row, patch: { priority: Number(v) } }),
 				)}
 			</td>
-			<td className={cx(cell, "num whitespace-nowrap")}>{row.dueDate ?? ""}</td>
+			<td className={cx(cell, "num max-md:empty:hidden")}>
+				{row.dueDate ?? ""}
+			</td>
 			<td className={cell}>
 				<TurnBadge turn={turnOf(row, project.statuses, p.me.id)} />
 			</td>
@@ -181,12 +189,15 @@ export function ProjectView({
 	const [ai, setAi] = useState(true);
 	const createRef = useRef<HTMLInputElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
-	const go = (s: Partial<ListSearch>) =>
-		nav({
-			to: "/p/$key",
-			params: { key: projectKey },
-			search: (prev: ListSearch) => ({ ...prev, ...s }),
-		});
+	const go = useCallback(
+		(s: Partial<ListSearch>) =>
+			nav({
+				to: "/p/$key",
+				params: { key: projectKey },
+				search: (prev: ListSearch) => ({ ...prev, ...s }),
+			}),
+		[nav, projectKey],
+	);
 
 	useEffect(() => {
 		const onKey = (e: globalThis.KeyboardEvent) => {
@@ -209,7 +220,7 @@ export function ProjectView({
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	});
+	}, [rows, sel, search.issue, go]);
 
 	const onCreate = async (e: KeyboardEvent<HTMLInputElement>) => {
 		if (e.key === "Escape") e.currentTarget.blur();
@@ -233,6 +244,7 @@ export function ProjectView({
 
 	if (!project || !me) return null;
 	const loading = review ? queue.loading : list.isLoading;
+	const error = review ? queue.error : list.error;
 	return (
 		<div className="flex h-full">
 			<section className="min-w-0 flex-1 overflow-auto p-4">
@@ -273,6 +285,11 @@ export function ProjectView({
 				</div>
 				{loading ? (
 					<p className="text-nezumi">{t("list.loading")}</p>
+				) : error && rows.length === 0 ? (
+					<p role="alert" className="py-8 text-sash">
+						{t("list.error")}
+						{error.message}
+					</p>
 				) : rows.length === 0 ? (
 					<p className="py-8 text-nezumi">
 						{review
@@ -282,8 +299,8 @@ export function ProjectView({
 								: t("list.empty")}
 					</p>
 				) : (
-					<table className="w-full border-collapse text-base">
-						<thead>
+					<table className="w-full border-collapse text-base max-md:block">
+						<thead className="max-md:hidden">
 							<tr className="text-left text-sm text-nezumi">
 								{(
 									[
@@ -298,14 +315,17 @@ export function ProjectView({
 								).map((c) => (
 									<th
 										key={c}
-										className="border-b border-line px-2 py-1 font-normal"
+										className={cx(
+											"whitespace-nowrap border-b border-line px-2 py-1 font-normal",
+											c === "title" && "w-full",
+										)}
 									>
 										{t(`col.${c}`)}
 									</th>
 								))}
 							</tr>
 						</thead>
-						<tbody>
+						<tbody className="max-md:block">
 							{rows.map((row, i) => (
 								<Row
 									key={row.id}
@@ -324,6 +344,9 @@ export function ProjectView({
 						</tbody>
 					</table>
 				)}
+				{review && queue.truncated && (
+					<p className="mt-3 text-sm text-nezumi">{t("review.truncated")}</p>
+				)}
 				{!review && list.hasNextPage && (
 					<Button
 						className="mt-3"
@@ -333,7 +356,9 @@ export function ProjectView({
 						{t("list.more")}
 					</Button>
 				)}
-				<p className="mt-6 text-xs text-nezumi">{t("key.help")}</p>
+				<p className="mt-6 hidden text-xs text-nezumi md:block pointer-coarse:hidden">
+					{t("key.help")}
+				</p>
 			</section>
 			{search.issue && (
 				<IssuePanel

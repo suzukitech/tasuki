@@ -7,11 +7,18 @@ export const ja = {
 	"nav.settings": "設定",
 	"nav.project": "プロジェクト",
 	"nav.logout": "ログアウト",
+	"nav.newProject": "プロジェクトを作る",
 	"board.soon":
 		"ボードは次のバージョンで追加します。いまはリストで状態を変えられます。",
 	"settings.soon": "設定画面は次のバージョンで追加します。",
 	"home.empty":
-		"参加しているプロジェクトがありません。管理者にプロジェクトへの追加を頼んでください。",
+		"参加しているプロジェクトがまだありません。下のフォームで最初のプロジェクトを作れます。",
+	"project.new.title": "プロジェクトを作る",
+	"project.new.key": "キー（英大文字2〜10字。チケット番号の頭になります）",
+	"project.new.name": "名前",
+	"project.new.submit": "作成する",
+	"project.new.fail":
+		"プロジェクトを作れませんでした。キーが英大文字2〜10字か、すでに使われていないかを確かめてください。",
 
 	"auth.email": "メールアドレス",
 	"auth.password": "パスワード（8文字以上）",
@@ -34,6 +41,7 @@ export const ja = {
 	"list.empty": "チケットはまだありません。C キーでタイトルだけ入れて作れます",
 	"list.noMatch":
 		"条件に合うチケットがありません。検索を変えるか、空にして全件を表示してください。",
+	"list.error": "チケットを読み込めませんでした。",
 	"list.more": "さらに読み込む",
 	"list.loading": "読み込んでいます",
 	"list.search": "検索（/）",
@@ -44,6 +52,8 @@ export const ja = {
 	"list.create.fail": "チケットを作れませんでした。",
 	"review.empty":
 		"いま確認待ちはありません。AIが計画やレポートを出すとここに並びます。",
+	"review.truncated":
+		"確認待ちが多く、一部しか表示できていません。リストで status:plan_review などを検索すると残りを探せます。",
 	"col.ref": "番号",
 	"col.title": "タイトル",
 	"col.status": "状態",

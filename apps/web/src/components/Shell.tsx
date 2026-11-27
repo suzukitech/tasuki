@@ -5,6 +5,7 @@ import {
 	Outlet,
 	useNavigate,
 	useParams,
+	useSearch,
 } from "@tanstack/react-router";
 import { t } from "../i18n";
 import { api } from "../lib/api";
@@ -27,6 +28,8 @@ function Nav({ projectKey }: { projectKey?: string }) {
 	const me = useMe();
 	const project = useProject(projectKey ?? "");
 	const queue = useReviewQueue(projectKey ?? "", project.data, me.data);
+	const inReview =
+		(useSearch({ strict: false }) as { view?: string }).view === "review";
 	return (
 		<nav className="flex flex-wrap items-center gap-1 border-b border-line bg-surface p-2 md:h-full md:w-56 md:shrink-0 md:flex-col md:items-stretch md:border-r md:border-b-0 md:p-3">
 			<div className="flex items-center gap-2 md:mb-3 md:flex-col md:items-stretch">
@@ -67,7 +70,8 @@ function Nav({ projectKey }: { projectKey?: string }) {
 						params={{ key: projectKey }}
 						search={{}}
 						className={link}
-						activeOptions={{ includeSearch: true }}
+						// the list entry is "current" only outside the review view (one aria-current)
+						activeOptions={{ includeSearch: inReview, exact: true }}
 						activeProps={{ className: "active" }}
 					>
 						{t("nav.list")}
@@ -81,6 +85,9 @@ function Nav({ projectKey }: { projectKey?: string }) {
 					</Link>
 				</>
 			)}
+			<Link to="/new" className={link}>
+				{t("nav.newProject")}
+			</Link>
 			<Link to="/settings" className={link}>
 				{t("nav.settings")}
 			</Link>

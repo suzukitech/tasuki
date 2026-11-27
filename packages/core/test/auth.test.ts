@@ -7,6 +7,7 @@ import {
 	createSession,
 	getIssue,
 	hashPassword,
+	listProjects,
 	login,
 	resolveSession,
 	resolveToken,
@@ -118,6 +119,12 @@ describe("sessions, invites, setup", () => {
 			password: "password1",
 		});
 		expect(admin).toMatchObject({ email: "root@example.com", role: "admin" });
+		// first admin lands on the sample project, as its manager
+		const demo = listProjects({
+			db,
+			actor: { userId: admin.id, via: "web", auth: "session" },
+		});
+		expect(demo.map((p) => [p.key, p.role])).toEqual([["DEMO", "manager"]]);
 		expect(
 			await codeOf(() =>
 				setupFirstAdmin(db, {

@@ -53,6 +53,7 @@
     "packages/db": {
       "name": "@tasuki/db",
       "dependencies": {
+        "@tasuki/schema": "workspace:*",
         "drizzle-orm": "^0.45",
         "fractional-indexing": "^4.0.0",
       },

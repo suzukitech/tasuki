@@ -1,5 +1,5 @@
 import { generateNKeysBetween } from "fractional-indexing";
-import type { Conn, Db } from "./index";
+import type { Conn } from "./index";
 
 /** A db handle or a transaction: anything with insert/select. */
 type Tx = Pick<Conn, "insert">;
@@ -74,7 +74,8 @@ const SAMPLE_ISSUES = [
 	{ title: "通知機能", type: "エピック", category: "draft" },
 ] as const;
 
-export function seedSampleProject(db: Db, ownerUserId: string) {
+/** Creates DEMO with `ownerUserId` as manager. Takes a transaction handle too (nests as a savepoint). */
+export function seedSampleProject(db: Conn, ownerUserId: string) {
 	return db.transaction((tx) => {
 		const project = tx
 			.insert(projects)

@@ -14,6 +14,7 @@ import {
 import {
 	bulkInput,
 	criteriaInput,
+	type EventType,
 	evidenceInput,
 	noteInput,
 	planInput,
@@ -57,7 +58,7 @@ import {
 import { requireApprovedPlan, transition } from "./transitions";
 
 const LOCK_MS = 30 * 60 * 1000;
-const announce = (c: Ctx, l: Loaded, type: string) =>
+const announce = (c: Ctx, l: Loaded, type: EventType) =>
 	record(c, type, l.project.id, l.ref);
 const reviewUrl = (ref: string, tab: string) => `/issues/${ref}?tab=${tab}`;
 

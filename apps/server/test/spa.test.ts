@@ -34,11 +34,20 @@ describe("SPA serving", () => {
 		expect((await app.request("/api/nope")).status).toBe(404);
 		expect((await app.request("/mcp", { method: "GET" })).status).toBe(401);
 	});
-	test("path traversal and bad escapes fall back to index.html, never leak files", async () => {
-		for (const p of ["/..%2f..%2fpackage.json", "/%E0%A4%A"]) {
+	test("path traversal and bad escapes never leak files", async () => {
+		const r = await app.request("/..%2f..%2fpackage.json");
+		expect(r.status).toBe(404);
+		expect(await r.text()).not.toContain("workspaces");
+		const bad = await app.request("/%E0%A4%A");
+		expect(await bad.text()).toContain("<title>spa</title>");
+	});
+	test("a missing asset or a file-like path is 404, not index.html", async () => {
+		for (const p of ["/assets/gone.js", "/missing.js", "/favicon.ico"]) {
 			const r = await app.request(p);
-			expect(await r.text()).toContain("<title>spa</title>");
+			expect(r.status).toBe(404);
+			expect(await r.text()).not.toContain("<title>spa</title>");
 		}
+		expect((await app.request("/p/WEB")).status).toBe(200);
 	});
 	test("without a dist nothing is served", async () => {
 		expect((await mk().request("/")).status).toBe(404);

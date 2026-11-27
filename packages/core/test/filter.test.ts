@@ -87,6 +87,14 @@ describe("searchIssues", () => {
 			searchIssues(c, "web", s).map((i) => i.number);
 		return { ...w, q, m };
 	}
+	test("rows carry their labels (list view shows them)", () => {
+		const { m } = data();
+		expect(searchIssues(m, "web", "").map((i) => i.labels)).toEqual([
+			["bug"],
+			[],
+			["Feature"],
+		]);
+	});
 	test("conditions", () => {
 		const { q, m, ctx, u } = data();
 		expect(q("")).toEqual([1, 2, 3]);

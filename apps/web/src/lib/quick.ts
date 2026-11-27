@@ -1,4 +1,4 @@
-import { parseQuickTitle } from "@tasuki/schema";
+import { parseQuickTitle } from "@tasuki/schema/pure";
 import type { Member } from "./types";
 
 /** Quick-create text → POST body. null when there is no title. An unknown @name stays in the title. */

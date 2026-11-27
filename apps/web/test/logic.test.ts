@@ -1,11 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { t } from "../src/i18n";
 import { ApiError, api } from "../src/lib/api";
+import { mapPages, projectOf } from "../src/lib/cache";
+import { criteriaBody, critsOf, shown } from "../src/lib/draft";
 import { etagOf, writeError } from "../src/lib/etag";
 import { keyAction, shouldHandleKey } from "../src/lib/keys";
+import { PRIORITY_KEYS } from "../src/lib/priority";
 import { buildCreate } from "../src/lib/quick";
 import { turnOf } from "../src/lib/turn";
-import type { IssueRow, Status } from "../src/lib/types";
+import type { IssueRow, Page, Status } from "../src/lib/types";
 
 const body = { tagName: "BODY" };
 const ev = (key: string, o: object = {}) => ({ key, target: body, ...o });
@@ -65,6 +68,7 @@ describe("turn badge", () => {
 		dueDate: null,
 		flow: "ai",
 		updatedAt: "2026-01-01T00:00:00.000Z",
+		labels: [],
 		...o,
 	});
 	test("approver, AI, others, done, unknown", () => {
@@ -174,4 +178,60 @@ describe("api()", () => {
 		);
 		globalThis.fetch = real;
 	});
+});
+
+describe("optimistic list edit", () => {
+	const row = (ref: string, priority: number | null = null) =>
+		({ ref, priority }) as IssueRow;
+	const page = (...refs: string[]): Page => ({
+		items: refs.map((r) => row(r)),
+		nextCursor: null,
+	});
+	test("patches the matching row in infinite data", () => {
+		const d = { pages: [page("W-1", "W-2")], pageParams: [undefined] };
+		const out = mapPages(d, "W-2", { priority: 3 });
+		expect(out.pages[0]?.items.map((i) => i.priority)).toEqual([null, 3]);
+		expect(d.pages[0]?.items[1]?.priority).toBeNull(); // input untouched
+	});
+	test("a plain Page (review queue) or undefined passes through unchanged", () => {
+		const plain = page("W-1");
+		expect(mapPages(plain, "W-1", { priority: 3 })).toBe(plain);
+		expect(mapPages(undefined, "W-1", { priority: 3 })).toBeUndefined();
+	});
+	test("project key comes from the ref", () => {
+		expect(projectOf("WEB-12")).toBe("WEB");
+		expect(projectOf("AB-1")).toBe("AB");
+	});
+});
+
+describe("drafts", () => {
+	test("an untouched field follows the server, an edited one keeps the draft", () => {
+		expect(shown(undefined, "server")).toBe("server");
+		expect(shown("typed", "server")).toBe("typed");
+		expect(shown("", "server")).toBe(""); // cleared on purpose is still a draft
+	});
+	test("criteria: a refetched list carries ids, so the next save keeps them", () => {
+		const server = [
+			{ id: "c1", text: "a" },
+			{ id: "c2", text: "b" },
+		];
+		const next = [...critsOf(server), { id: undefined, text: "  new " }];
+		expect(criteriaBody(next)).toEqual([
+			{ id: "c1", text: "a" },
+			{ id: "c2", text: "b" },
+			{ text: "new" },
+		]);
+		expect(criteriaBody([{ id: undefined, text: "  " }])).toEqual([]);
+	});
+});
+
+test("priority options derive from PRIORITIES, in value order", () => {
+	expect(PRIORITY_KEYS).toEqual([
+		"priority.none",
+		"priority.low",
+		"priority.medium",
+		"priority.high",
+		"priority.urgent",
+	]);
+	for (const k of PRIORITY_KEYS) expect(t(k)).not.toBe(k);
 });

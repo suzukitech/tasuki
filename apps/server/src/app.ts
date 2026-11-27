@@ -555,6 +555,8 @@ export function createApp(
 						? { "cache-control": "public, max-age=31536000, immutable" }
 						: {},
 				});
+			// a missing asset or a path with a file extension is a real 404, not a client route
+			if (p.startsWith("/assets/") || /\.[^/]+$/.test(p)) return c.notFound();
 			const index = Bun.file(resolve(webDir, "index.html"));
 			return (await index.exists())
 				? new Response(index, {

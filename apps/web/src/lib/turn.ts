@@ -1,6 +1,6 @@
-import { whoseTurn } from "@tasuki/schema";
+import { whoseTurn } from "@tasuki/schema/pure";
 import type { Key } from "../i18n";
-import type { IssueRow, Status } from "./types";
+import type { IssueCore, Status } from "./types";
 
 export type Turn = NonNullable<ReturnType<typeof whoseTurn>>;
 export const TURN_KEY: Record<Turn, Key> = {
@@ -11,7 +11,7 @@ export const TURN_KEY: Record<Turn, Key> = {
 
 /** Badge for a list row. null when nobody's turn (done) or the status is unknown. */
 export function turnOf(
-	issue: IssueRow,
+	issue: IssueCore,
 	statuses: Status[],
 	userId: string,
 ): Turn | null {

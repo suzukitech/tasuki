@@ -1,15 +1,17 @@
 import {
-	type InfiniteData,
+	type QueryClient,
 	useInfiniteQuery,
 	useMutation,
 	useQueries,
 	useQuery,
 	useQueryClient,
 } from "@tanstack/react-query";
+import { EVENT_TYPES } from "@tasuki/schema/pure";
 import { useEffect } from "react";
 import { useToast } from "../components/ui";
 import { t } from "../i18n";
 import { api } from "./api";
+import { mapPages, type Patch, projectOf } from "./cache";
 import { etagOf, writeError } from "./etag";
 import { turnOf } from "./turn";
 import type {
@@ -34,8 +36,9 @@ export const useProjects = () =>
 	});
 export const useProject = (key: string) =>
 	useQuery({
-		queryKey: ["project", key],
+		queryKey: ["project", key.toUpperCase()],
 		queryFn: () => api<ProjectDetail>("GET", `/projects/${key}`),
+		enabled: !!key,
 	});
 
 export const issueQuery = (ref: string) => ({
@@ -46,7 +49,7 @@ export const useIssue = (ref: string) => useQuery(issueQuery(ref));
 
 export function useIssues(key: string, q: string) {
 	return useInfiniteQuery({
-		queryKey: ["issues", key, q],
+		queryKey: ["issues", key.toUpperCase(), q],
 		initialPageParam: undefined as number | undefined,
 		queryFn: ({ pageParam }) => {
 			const p = new URLSearchParams({ q, limit: "50" });
@@ -54,16 +57,23 @@ export function useIssues(key: string, q: string) {
 			return api<Page>("GET", `/projects/${key}/issues?${p}`);
 		},
 		getNextPageParam: (last) => last.nextCursor ?? undefined,
+		enabled: !!key,
 	});
 }
 
-/** Issues waiting on this user: plan / report reviews where it is their turn. */
+const REVIEW_CATEGORIES = ["plan_review", "impl_review"] as const;
+
+/**
+ * Issues waiting on this user: plan / report reviews where it is their turn.
+ * Own key root ("review"), so list-cache edits never touch these plain Pages.
+ */
 export function useReviewQueue(key: string, project?: ProjectDetail, me?: Me) {
 	const res = useQueries({
-		queries: ["plan_review", "impl_review"].map((s) => ({
-			queryKey: ["issues", key, `review:${s}`],
+		queries: REVIEW_CATEGORIES.map((s) => ({
+			queryKey: ["review", key.toUpperCase(), s],
 			queryFn: () =>
 				api<Page>("GET", `/projects/${key}/issues?q=status:${s}&limit=200`),
+			enabled: !!key,
 		})),
 	});
 	const items: IssueRow[] =
@@ -73,42 +83,43 @@ export function useReviewQueue(key: string, project?: ProjectDetail, me?: Me) {
 					.filter((i) => turnOf(i, project.statuses, me.id) === "you")
 					.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)) // longest waiting first
 			: [];
-	return { items, loading: res.some((r) => r.isLoading) };
+	return {
+		items,
+		loading: res.some((r) => r.isLoading),
+		error: res.find((r) => r.error)?.error ?? null,
+		/** the server had more than one page: some waiting issues are not shown */
+		truncated: res.some((r) => r.data?.nextCursor != null),
+	};
 }
 
-/** Show the toast for a failed write; on 412 the caller's data is refetched. */
+/** Refresh everything an issue change can touch: the issue, its project's lists and review queue. */
+export function refreshIssue(qc: QueryClient, ref: string) {
+	const key = projectOf(ref);
+	return Promise.all([
+		qc.invalidateQueries({ queryKey: ["issue", ref] }),
+		qc.invalidateQueries({ queryKey: ["issues", key] }),
+		qc.invalidateQueries({ queryKey: ["review", key] }),
+	]);
+}
+
+/** Show the toast for a failed write; on 412 the stale issue data is refetched. */
 export function useWriteFailure() {
 	const toast = useToast();
 	const qc = useQueryClient();
 	return (e: unknown) => {
 		const w = writeError(e);
 		toast(w.detail ? `${t(w.key)}${w.detail}` : t(w.key));
-		if (w.conflict) qc.invalidateQueries();
+		if (w.conflict)
+			for (const k of ["issue", "issues", "review"])
+				qc.invalidateQueries({ queryKey: [k] });
 	};
 }
-
-type Patch = {
-	statusId?: string;
-	assigneeId?: string | null;
-	priority?: number | null;
-};
-const mapPages = (
-	d: InfiniteData<Page> | undefined,
-	ref: string,
-	patch: Patch,
-): InfiniteData<Page> | undefined =>
-	d && {
-		...d,
-		pages: d.pages.map((p) => ({
-			...p,
-			items: p.items.map((i) => (i.ref === ref ? { ...i, ...patch } : i)),
-		})),
-	};
 
 /** Inline edit from the list: optimistic, rolled back on error, If-Match for field edits. */
 export function useInlineEdit(key: string) {
 	const qc = useQueryClient();
 	const fail = useWriteFailure();
+	const root = ["issues", key.toUpperCase()];
 	return useMutation({
 		mutationFn: ({ row, patch }: { row: IssueRow; patch: Patch }) =>
 			patch.statusId
@@ -117,46 +128,20 @@ export function useInlineEdit(key: string) {
 						"if-match": etagOf(row.updatedAt),
 					}),
 		onMutate: async ({ row, patch }) => {
-			await qc.cancelQueries({ queryKey: ["issues", key] });
-			const snap = qc.getQueriesData<InfiniteData<Page>>({
-				queryKey: ["issues", key],
-			});
-			qc.setQueriesData<InfiniteData<Page>>(
-				{ queryKey: ["issues", key] },
-				(d) => mapPages(d, row.ref, patch),
-			);
+			await qc.cancelQueries({ queryKey: root });
+			const snap = qc.getQueriesData({ queryKey: root });
+			qc.setQueriesData({ queryKey: root }, (d) => mapPages(d, row.ref, patch));
 			return snap;
 		},
 		onError: (e, _v, snap) => {
 			for (const [k, d] of snap ?? []) qc.setQueryData(k, d);
 			fail(e);
 		},
-		onSettled: (_d, _e, { row }) => {
-			qc.invalidateQueries({ queryKey: ["issues", key] });
-			qc.invalidateQueries({ queryKey: ["issue", row.ref] });
-		},
+		onSettled: (_d, _e, { row }) => refreshIssue(qc, row.ref),
 	});
 }
 
-const EVENTS = [
-	"issue.created",
-	"issue.updated",
-	"issue.deleted",
-	"issue.moved",
-	"issue.started",
-	"issue.completed",
-	"issue.commented",
-	"plan.submitted",
-	"plan.approved",
-	"criteria.updated",
-	"evidence.recorded",
-	"report.submitted",
-	"report.returned",
-	"question.asked",
-	"question.answered",
-];
-
-/** One EventSource for the whole app; every event refreshes the affected issue and the lists. */
+/** One EventSource for the whole app; an event refreshes its issue and that project's lists. */
 export function useLiveUpdates(enabled: boolean) {
 	const qc = useQueryClient();
 	useEffect(() => {
@@ -165,11 +150,11 @@ export function useLiveUpdates(enabled: boolean) {
 		const on = (ev: MessageEvent) => {
 			try {
 				const { ref } = JSON.parse(ev.data) as { ref?: string };
-				if (ref) qc.invalidateQueries({ queryKey: ["issue", ref] });
+				if (ref) return void refreshIssue(qc, ref);
 			} catch {}
-			qc.invalidateQueries({ queryKey: ["issues"] });
+			qc.invalidateQueries();
 		};
-		for (const name of EVENTS) es.addEventListener(name, on);
+		for (const name of EVENT_TYPES) es.addEventListener(name, on);
 		return () => es.close();
 	}, [enabled, qc]);
 }

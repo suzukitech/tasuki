@@ -1,16 +1,7 @@
 import { z } from "zod";
+import { PRIORITY_MAX } from "./pure";
 
-export const PRIORITIES = {
-	none: 0,
-	low: 1,
-	medium: 2,
-	high: 3,
-	urgent: 4,
-} as const;
-/** Priority label ("high"), "none" for null / 0. */
-export const priorityName = (p: number | null) =>
-	Object.entries(PRIORITIES).find(([, v]) => v === (p ?? 0))?.[0] ?? String(p);
-export const PRIORITY_MAX = Math.max(...Object.values(PRIORITIES));
+export * from "./pure";
 
 const md = (max = 4000) => z.string().max(max);
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
@@ -147,54 +138,3 @@ export const listQuery = z.object({
 	),
 	limit: z.coerce.number().int().min(1).max(200).optional(),
 });
-
-/** "fix login @taro #bug !high" → title + assignee/labels/priority. Accepts full-width ＠＃！. */
-export function parseQuickTitle(text: string) {
-	const out: {
-		title: string;
-		assignee?: string;
-		labels: string[];
-		priority?: number;
-	} = {
-		title: "",
-		labels: [],
-	};
-	const words: string[] = [];
-	for (const w of text.trim().split(/\s+/)) {
-		const body = w.slice(1);
-		const p = body.toLowerCase();
-		if (!body) words.push(w);
-		else if (/^[@＠]/.test(w)) out.assignee = body;
-		else if (/^[#＃]/.test(w)) out.labels.push(body);
-		else if (/^[!！]/.test(w) && p in PRIORITIES)
-			out.priority = PRIORITIES[p as keyof typeof PRIORITIES];
-		else words.push(w);
-	}
-	out.title = words.join(" ");
-	return out;
-}
-
-/** Whose move is it? null when nobody's (done). */
-export function whoseTurn(
-	issue: {
-		category: string;
-		reporterId: string | null;
-		assigneeId: string | null;
-		approverId: string | null;
-	},
-	userId: string,
-): "you" | "ai" | "others" | null {
-	const who = (id: string | null) => (id === userId ? "you" : "others");
-	switch (issue.category) {
-		case "draft":
-			return who(issue.reporterId);
-		case "ready":
-		case "in_progress":
-			return issue.assigneeId ? "ai" : who(issue.reporterId);
-		case "plan_review":
-		case "impl_review":
-			return who(issue.approverId ?? issue.reporterId);
-		default:
-			return null;
-	}
-}
