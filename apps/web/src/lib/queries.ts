@@ -18,9 +18,11 @@ import type {
 	IssueDetail,
 	IssueRow,
 	Me,
+	Notifications,
 	Page,
 	Project,
 	ProjectDetail,
+	Template,
 } from "./types";
 
 type EditRow = Pick<IssueRow, "ref" | "updatedAt">;
@@ -42,6 +44,21 @@ export const useProject = (key: string) =>
 		queryFn: () =>
 			api<ProjectDetail>("GET", `/projects/${encodeURIComponent(key)}`),
 		enabled: !!key,
+	});
+
+export const useTemplates = (key: string) =>
+	useQuery({
+		queryKey: ["templates", key.toUpperCase()],
+		queryFn: () =>
+			api<Template[]>("GET", `/projects/${encodeURIComponent(key)}/templates`),
+		enabled: !!key,
+	});
+
+export const useNotifications = (enabled = true) =>
+	useQuery({
+		queryKey: ["notifications"],
+		queryFn: () => api<Notifications>("GET", "/me/notifications?limit=20"),
+		enabled,
 	});
 
 export const issueQuery = (ref: string) => ({
@@ -177,6 +194,12 @@ export function useLiveUpdates(enabled: boolean) {
 					type?: string;
 					ref?: string;
 				};
+				// a new notification for this user: refresh the bell, and the issue it is about
+				if (type === "notification.created") {
+					qc.invalidateQueries({ queryKey: ["notifications"] });
+					if (ref) refreshIssue(qc, ref);
+					return;
+				}
 				// project-level event: its ref is the project key
 				if (type === "project.updated" && ref)
 					return void Promise.all(

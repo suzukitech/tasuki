@@ -30,6 +30,7 @@ import {
 	useReviewQueue,
 } from "../lib/queries";
 import { CommandPalette } from "./CommandPalette";
+import { NotificationBell } from "./Notifications";
 import { Avatar, cx, IconButton, iconProps, Kbd, Menu } from "./ui";
 
 const link =
@@ -89,6 +90,7 @@ function Nav({
 				<span className="max-w-24 truncate text-sm max-md:hidden md:max-w-none md:flex-1">
 					{me.data?.name}
 				</span>
+				<NotificationBell />
 				<IconButton
 					icon={LogOut}
 					label={t("nav.logout")}
@@ -208,7 +210,7 @@ export function AppLayout() {
 	if (me.isLoading) return null;
 	if (me.isError) return <Navigate to="/login" />;
 	return (
-		<div className="flex h-full flex-col md:flex-row">
+		<div className="flex h-full flex-col overflow-hidden md:flex-row">
 			<Nav projectKey={key} onPalette={() => setPalette(true)} />
 			<main className="min-h-0 min-w-0 flex-1">
 				<Outlet />

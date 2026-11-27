@@ -7,3 +7,6 @@ tasuki-data/
 .DS_Store
 .serena/
 .ui-review/
+e2e/.auth/
+test-results/
+playwright-report/

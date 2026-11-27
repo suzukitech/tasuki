@@ -122,3 +122,25 @@ export type IssueDetail = {
 	activities: Activity[];
 };
 export type Page = { items: IssueRow[]; nextCursor: number | null };
+
+export type NotificationRow = {
+	id: string;
+	kind:
+		| "plan_submitted"
+		| "report_submitted"
+		| "question_asked"
+		| "question_answered"
+		| "assigned";
+	ref: string;
+	title: string;
+	readAt: string | null;
+	createdAt: string;
+};
+export type Notifications = { items: NotificationRow[]; unread: number };
+export type Webhook = { id: string; url: string; events: string[] };
+export type Template = {
+	id: string;
+	name: string;
+	typeId: string | null;
+	bodyTemplateMd: string;
+};

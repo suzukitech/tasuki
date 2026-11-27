@@ -9,7 +9,7 @@ test("EVENT_TYPES covers every event type core records", () => {
 	const used = new Set<string>();
 	for (const f of readdirSync(dir))
 		for (const m of readFileSync(join(dir, f), "utf8").matchAll(
-			/"((?:issue|plan|criteria|evidence|report|question|project)\.[a-z]+)"/g,
+			/"((?:issue|plan|criteria|evidence|report|question|project|notification)\.[a-z]+)"/g,
 		))
 			used.add(m[1] as string);
 	expect(used.size).toBeGreaterThan(10);

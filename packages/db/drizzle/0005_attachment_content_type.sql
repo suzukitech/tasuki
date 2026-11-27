@@ -1,0 +1,1 @@
+ALTER TABLE `attachments` ADD `content_type` text DEFAULT 'image/png' NOT NULL;

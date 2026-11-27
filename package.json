@@ -13,10 +13,12 @@
 		"format": "biome check --write .",
 		"typecheck": "tsc --noEmit -p . && tsc --noEmit -p apps/web",
 		"test": "bun test",
-		"check": "bun run lint && bun run typecheck && bun test --coverage"
+		"check": "bun run lint && bun run typecheck && bun test --coverage",
+		"e2e": "bun run build && bunx --bun playwright test"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.6.9",
+		"@playwright/test": "^1.65.1",
 		"@types/bun": "1.4.5",
 		"typescript": "7.0.2"
 	}

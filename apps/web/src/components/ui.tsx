@@ -24,6 +24,7 @@ import { hueOf, initialOf } from "../lib/format";
 import { PRIORITY_KEYS } from "../lib/priority";
 import { TURN_KEY, type Turn } from "../lib/turn";
 import type { Member } from "../lib/types";
+import { Markdown } from "./Markdown";
 
 export const cx = (...c: (string | false | undefined | null)[]) =>
 	c.filter(Boolean).join(" ");
@@ -85,7 +86,7 @@ export function IconButton({
 	);
 }
 
-/** Panel body text: 15px / 1.75, about 68 columns wide. */
+/** Panel body text: 15px / 1.75, about 68 columns wide. Markdown (safe subset), line breaks kept. */
 export const Text = ({
 	children,
 	className,
@@ -93,14 +94,10 @@ export const Text = ({
 	children: string;
 	className?: string;
 }) => (
-	<p
-		className={cx(
-			"max-w-[68ch] whitespace-pre-wrap text-base leading-[1.75]",
-			className,
-		)}
-	>
-		{children}
-	</p>
+	<Markdown
+		md={children}
+		className={cx("max-w-[68ch] text-base leading-[1.75]", className)}
+	/>
 );
 
 /** Shortcut hint. Hidden on narrow screens and touch (no keyboard there). */
@@ -245,7 +242,7 @@ export function Segmented<V extends string | boolean>(p: {
 					aria-pressed={p.value === o.value}
 					onClick={() => p.onChange(o.value)}
 					className={cx(
-						"inline-flex items-center gap-1.5 rounded-[5px] px-2.5 text-xs leading-6 whitespace-nowrap pointer-coarse:min-h-11",
+						"inline-flex items-center gap-1.5 rounded-[5px] px-2.5 text-xs leading-6 whitespace-nowrap pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center",
 						p.value === o.value
 							? "bg-surface font-medium text-ink shadow-[0_0_0_1px_var(--line-strong)]"
 							: "text-nezumi hover:text-ink",
@@ -450,7 +447,7 @@ export function Menu(p: {
 					}
 				}}
 				className={cx(
-					"inline-flex max-w-full items-center gap-2 rounded-control text-left hover:bg-row-hover pointer-coarse:min-h-11",
+					"inline-flex max-w-full items-center gap-2 rounded-control text-left hover:bg-row-hover pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center",
 					p.className,
 				)}
 			>

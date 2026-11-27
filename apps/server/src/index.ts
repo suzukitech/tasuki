@@ -14,6 +14,8 @@ const app = createApp(openDb(join(data, "tasuki.db")), {
 	baseUrl,
 	trustProxy: process.env.TASUKI_TRUST_PROXY === "1",
 	webDir: webDir(),
+	dataDir: data,
+	webhook: { allowPrivate: process.env.TASUKI_WEBHOOK_ALLOW_PRIVATE === "1" },
 });
 
 const server = Bun.serve({
