@@ -81,11 +81,13 @@ export function useReviewQueue(key: string, project?: ProjectDetail, me?: Me) {
 			enabled: !!key,
 		})),
 	});
+	// an issue can match two queries: key by id
+	const byId = new Map(
+		res.flatMap((r) => r.data?.items ?? []).map((i) => [i.id, i]),
+	);
 	const items: IssueRow[] =
 		project && me
-			? res
-					.flatMap((r) => r.data?.items ?? [])
-					.filter((i, n, all) => all.findIndex((x) => x.id === i.id) === n) // an issue can match two queries
+			? [...byId.values()]
 					.filter((i) => turnOf(i, project.statuses, me.id) === "you")
 					.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)) // longest waiting first
 			: [];

@@ -17,5 +17,8 @@ export function turnOf(
 ): Turn | null {
 	const category = statuses.find((s) => s.id === issue.statusId)?.category;
 	if (!category) return null;
-	return whoseTurn({ ...issue, category }, userId);
+	return whoseTurn(
+		{ ...issue, openQuestions: issue.openQuestions ?? 0, category },
+		userId,
+	);
 }

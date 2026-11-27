@@ -85,7 +85,7 @@ export function whoseTurn(
 		reporterId: string | null;
 		assigneeId: string | null;
 		approverId: string | null;
-		openQuestions?: number;
+		openQuestions: number;
 	},
 	userId: string,
 ): "you" | "ai" | "others" | null {

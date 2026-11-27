@@ -16,8 +16,10 @@ export function Column({
 	/** fill the viewport and centre vertically (auth pages, outside the sidebar layout) */
 	full?: boolean;
 }) {
+	// the app shell already owns the page's <main>; only the standalone auth pages render one
+	const Root = full ? "main" : "div";
 	return (
-		<main
+		<Root
 			className={cx(
 				"mx-auto flex w-full max-w-[360px] flex-col px-4",
 				full ? "min-h-full justify-center py-12" : "pt-16 pb-12",
@@ -33,7 +35,7 @@ export function Column({
 				<p className="mt-2 text-sm leading-relaxed text-nezumi">{lead}</p>
 			)}
 			<div className="mt-6">{children}</div>
-		</main>
+		</Root>
 	);
 }
 

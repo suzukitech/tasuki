@@ -143,6 +143,17 @@ test("askQuestion records via; list rows and getIssue count open questions", () 
 	expect(getIssue(tok, ref).openQuestions).toBe(1);
 });
 
+test("answerQuestion stamps answeredAt (the answer's own time)", () => {
+	const w = world();
+	const ref = w.mk({ title: "a" });
+	const q = askQuestion(w.ctx(w.u.mem, "token"), ref, "which db?");
+	w.clock.t = new Date("2026-01-02T00:00:00Z");
+	answerQuestion(w.ctx(w.u.mem), q.id, "sqlite");
+	const got = getIssue(w.ctx(w.u.mem), ref).questions[0];
+	expect(got?.answeredAt).toEqual(new Date("2026-01-02T00:00:00Z"));
+	expect(got?.createdAt).toEqual(new Date("2026-01-01T00:00:00Z"));
+});
+
 test("extendLockIfHeld respects token projectIds and membership", () => {
 	const w = world();
 	const ref = w.mk({ title: "a" });

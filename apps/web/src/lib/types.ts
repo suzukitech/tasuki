@@ -69,9 +69,12 @@ export type Question = {
 	askedBy: string | null;
 	bodyMd: string;
 	answerMd: string | null;
+	answeredBy: string | null;
 	via: string | null;
 	state: "open" | "answered";
 	createdAt: string;
+	/** null while open, and on answers from before the column existed */
+	answeredAt: string | null;
 };
 export type Comment = {
 	id: string;

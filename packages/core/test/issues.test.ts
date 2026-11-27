@@ -187,7 +187,12 @@ describe("comments / getIssue / misc", () => {
 		).toBeDefined();
 	});
 	test("whoseTurn", () => {
-		const base = { reporterId: "r", assigneeId: null, approverId: "a" };
+		const base = {
+			reporterId: "r",
+			assigneeId: null,
+			approverId: "a",
+			openQuestions: 0,
+		};
 		expect(whoseTurn({ ...base, category: "draft" }, "r")).toBe("you");
 		expect(whoseTurn({ ...base, category: "draft" }, "z")).toBe("others");
 		expect(whoseTurn({ ...base, category: "ready" }, "z")).toBe("others");

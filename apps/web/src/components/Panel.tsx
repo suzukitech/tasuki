@@ -11,13 +11,18 @@ import {
 	X,
 } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, useRef, useState } from "react";
-import { type Key, t } from "../i18n";
-import { ja } from "../i18n/ja";
+import { t } from "../i18n";
 import { api } from "../lib/api";
 import { type CritDraft, criteriaBody, critsOf, shown } from "../lib/draft";
 import { etagOf } from "../lib/etag";
-import { relativeTime, splitSteps, stepRefs } from "../lib/format";
-import { PRIORITY_KEYS } from "../lib/priority";
+import {
+	activityText,
+	memberName,
+	relativeTime,
+	splitSteps,
+	stepRefs,
+	viaLabel,
+} from "../lib/format";
 import { refreshIssue, useIssue, useWriteFailure } from "../lib/queries";
 import { turnOf } from "../lib/turn";
 import type {
@@ -27,6 +32,7 @@ import type {
 	Me,
 	ProjectDetail,
 } from "../lib/types";
+import { Field } from "./Form";
 import {
 	Avatar,
 	Button,
@@ -37,8 +43,11 @@ import {
 	iconProps,
 	inputCls,
 	Menu,
+	memberOptions,
+	priorityOptions,
 	Skeleton,
 	StatusDot,
+	Text,
 	TurnBadge,
 } from "./ui";
 
@@ -61,23 +70,6 @@ const H = ({ children }: { children: ReactNode }) => (
 		{children}
 	</h3>
 );
-/** Panel body text: 15px / 1.75, about 68 columns wide. */
-const Text = ({
-	children,
-	className,
-}: {
-	children: string;
-	className?: string;
-}) => (
-	<p
-		className={cx(
-			"max-w-[68ch] whitespace-pre-wrap text-base leading-[1.75]",
-			className,
-		)}
-	>
-		{children}
-	</p>
-);
 const Muted = ({ children }: { children: ReactNode }) => (
 	<p className="text-sm text-nezumi">{children}</p>
 );
@@ -88,21 +80,12 @@ const canReview = (d: IssueDetail, me: Me) =>
 	d.project.role === "manager" ||
 	me.id === reviewerOf(d.issue);
 
-export function viaLabel(via: string): string {
-	const known = `via.${via}` as Key;
-	if (
-		via === "web" ||
-		via === "cli" ||
-		via === "import" ||
-		via === "mcp:claude-code"
-	)
-		return t(known);
-	if (via.startsWith("mcp:")) return t("via.mcp", { client: via.slice(4) });
-	return via;
-}
-
 const nameOf = (id: string | null, project: ProjectDetail) =>
-	project.members.find((m) => m.id === id)?.name ?? t("unknown.user");
+	memberName(project.members, id);
+
+/** Quiet tag for anything written outside the Web UI (AI work is always told apart). */
+const ViaTag = ({ via }: { via: string | null }) =>
+	via && via !== "web" ? <Chip tone="ai">{viaLabel(via)}</Chip> : null;
 
 /** Avatar + name; the via tag is quiet and only shown for non-Web writes. */
 function Who({
@@ -119,26 +102,47 @@ function Who({
 		<span className="inline-flex items-center gap-2">
 			<Avatar id={id ?? "?"} name={name} size={20} />
 			<span className="font-medium text-ink">{name}</span>
-			{via && via !== "web" && (
-				<span className="rounded-chip bg-paper px-1.5 text-xs leading-5 text-asagi">
-					{viaLabel(via)}
-				</span>
-			)}
+			<ViaTag via={via} />
 		</span>
 	);
 }
 
-const Time = ({ at }: { at: string | number | Date }) => (
-	<time
-		dateTime={new Date(at).toISOString()}
-		title={new Date(at).toLocaleString("ja-JP")}
-		className="num text-xs text-nezumi"
-	>
-		{relativeTime(at)}
-	</time>
-);
+function Time({ at }: { at: string | number | Date }) {
+	const d = new Date(at);
+	return (
+		<time
+			dateTime={d.toISOString()}
+			title={d.toLocaleString("ja-JP")}
+			className="num text-xs text-nezumi"
+		>
+			{relativeTime(d)}
+		</time>
+	);
+}
 
 const label = "mb-1 block text-xs font-medium text-nezumi";
+
+/** One row of the field grid: label (or <label for>) + control. */
+const FieldRow = ({
+	name,
+	htmlFor,
+	children,
+}: {
+	name: string;
+	htmlFor?: string;
+	children: ReactNode;
+}) => (
+	<div className="grid grid-cols-[5.5rem_1fr] items-center gap-2">
+		{htmlFor ? (
+			<label className="text-nezumi" htmlFor={htmlFor}>
+				{name}
+			</label>
+		) : (
+			<span className="text-nezumi">{name}</span>
+		)}
+		{children}
+	</div>
+);
 
 function RequestTab({
 	d,
@@ -167,19 +171,14 @@ function RequestTab({
 				}),
 			{ onSuccess },
 		);
-	const field = "grid grid-cols-[5.5rem_1fr] items-center gap-2";
 	return (
 		<div>
-			<label className={label} htmlFor="f-title">
-				{t("req.title")}
-			</label>
-			<input
-				id="f-title"
-				className={inputCls}
+			<Field
+				label={t("req.title")}
 				value={title}
 				onChange={(e) => setDraft((x) => ({ ...x, title: e.target.value }))}
 			/>
-			<label className={cx(label, "mt-4")} htmlFor="f-body">
+			<label className={label} htmlFor="f-body">
 				{t("req.body")}
 			</label>
 			<textarea
@@ -212,44 +211,29 @@ function RequestTab({
 
 			<H>{t("req.fields")}</H>
 			<div className="space-y-1.5 text-sm">
-				<div className={field}>
-					<span className="text-nezumi">{t("col.assignee")}</span>
+				<FieldRow name={t("col.assignee")}>
 					<div>
 						<Menu
 							label={t("col.assignee")}
 							value={i.assigneeId ?? ""}
-							options={[
-								{ value: "", label: t("assignee.none") },
-								...project.members.map((m) => ({
-									value: m.id,
-									label: m.name,
-									icon: <Avatar id={m.id} name={m.name} />,
-								})),
-							]}
+							options={memberOptions(project.members)}
 							onChange={(v) => save({ assigneeId: v || null })}
 							className="-ml-1.5 min-h-8 px-1.5"
 						/>
 					</div>
-				</div>
-				<div className={field}>
-					<span className="text-nezumi">{t("col.priority")}</span>
+				</FieldRow>
+				<FieldRow name={t("col.priority")}>
 					<div>
 						<Menu
 							label={t("col.priority")}
 							value={String(i.priority ?? 0)}
-							options={PRIORITY_KEYS.map((k, n) => ({
-								value: String(n),
-								label: t(k),
-							}))}
+							options={priorityOptions()}
 							onChange={(v) => save({ priority: Number(v) })}
 							className="-ml-1.5 min-h-8 px-1.5"
 						/>
 					</div>
-				</div>
-				<div className={field}>
-					<label className="text-nezumi" htmlFor="f-due">
-						{t("col.due")}
-					</label>
+				</FieldRow>
+				<FieldRow name={t("col.due")} htmlFor="f-due">
 					<input
 						id="f-due"
 						type="date"
@@ -257,16 +241,15 @@ function RequestTab({
 						value={i.dueDate ?? ""}
 						onChange={(e) => save({ dueDate: e.target.value || null })}
 					/>
-				</div>
-				<div className={field}>
-					<span className="text-nezumi">{t("req.flow")}</span>
+				</FieldRow>
+				<FieldRow name={t("req.flow")}>
 					<FlowToggle
 						value={i.flow === "ai"}
 						onChange={(v) => save({ flow: v ? "ai" : "simple" })}
 						label={t("list.create.flow")}
 						className="justify-self-start"
 					/>
-				</div>
+				</FieldRow>
 			</div>
 
 			<H>{t("req.criteria")}</H>
@@ -558,21 +541,6 @@ function ReportTab({ d }: { d: IssueDetail }) {
 	);
 }
 
-const known = (prefix: string, k: string) =>
-	`${prefix}.${k}` in ja ? t(`${prefix}.${k}` as Key) : k;
-
-function activityText(a: Activity): string {
-	if (a.field) {
-		const field = known("field", a.field);
-		const long = (a.before ?? "").length > 40 || (a.after ?? "").length > 40;
-		if (long || a.field === "criteria") return t("act.changed", { field });
-		return a.before
-			? t("act.change", { field, before: a.before, after: a.after ?? "" })
-			: t("act.set", { field, after: a.after ?? "" });
-	}
-	return known("act", a.action);
-}
-
 function AnswerBox({
 	id,
 	onSubmit,
@@ -607,21 +575,12 @@ function AnswerBox({
 
 type Entry =
 	| {
-			k: "comment";
-			at: string;
-			id: string;
-			who: string | null;
-			via: string;
-			body: string;
-	  }
-	| {
-			k: "answer";
+			k: "comment" | "question" | "answer";
 			at: string;
 			id: string;
 			who: string | null;
 			via: string | null;
-			q: string;
-			a: string;
+			body: string;
 	  }
 	| { k: "activity"; at: string; id: string; a: Activity };
 
@@ -629,6 +588,7 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 	const act = useAct(d.ref);
 	const [text, setText] = useState("");
 	const open = d.questions.filter((q) => q.state === "open");
+	// a question sits at its asked time, its answer at the answer's own time
 	const timeline: Entry[] = [
 		...d.comments.map(
 			(c): Entry => ({
@@ -642,17 +602,24 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 		),
 		...d.questions
 			.filter((q) => q.state !== "open")
-			.map(
-				(q): Entry => ({
-					k: "answer",
+			.flatMap((q): Entry[] => [
+				{
+					k: "question",
 					at: q.createdAt,
 					id: q.id,
 					who: q.askedBy,
 					via: q.via,
-					q: q.bodyMd,
-					a: q.answerMd ?? "",
-				}),
-			),
+					body: q.bodyMd,
+				},
+				{
+					k: "answer",
+					at: q.answeredAt ?? q.createdAt,
+					id: `${q.id}-a`,
+					who: q.answeredBy,
+					via: null,
+					body: q.answerMd ?? "",
+				},
+			]),
 		...d.activities.map(
 			(a): Entry => ({ k: "activity", at: a.createdAt, id: a.id, a }),
 		),
@@ -666,9 +633,7 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 				>
 					<div className="mb-1.5 flex flex-wrap items-center gap-2">
 						<Who id={q.askedBy} via={q.via} project={project} />
-						<span className="rounded-chip border border-sash/40 px-1.5 text-xs leading-5 font-medium text-sash">
-							{t("thread.question.open")}
-						</span>
+						<Chip tone="sash">{t("thread.question.open")}</Chip>
 						<span className="ml-auto">
 							<Time at={q.createdAt} />
 						</span>
@@ -704,7 +669,10 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 								<span className="font-medium text-ink">
 									{nameOf(e.a.actorId, project)}
 								</span>
-								<span className="ml-1.5">{activityText(e.a)}</span>
+								<span className="ml-1.5">{activityText(e.a, project)}</span>
+								<span className="ml-1.5">
+									<ViaTag via={e.a.via} />
+								</span>
 							</span>
 							<Time at={e.at} />
 						</li>
@@ -712,19 +680,25 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 						<li key={e.id}>
 							<div className="mb-1 flex items-center gap-2">
 								<Who id={e.who} via={e.via} project={project} />
+								{e.k !== "comment" && (
+									<Chip>
+										{t(
+											e.k === "question"
+												? "thread.tag.question"
+												: "thread.tag.answer",
+										)}
+									</Chip>
+								)}
 								<span className="ml-auto">
 									<Time at={e.at} />
 								</span>
 							</div>
-							{e.k === "comment" ? (
+							{e.k !== "answer" ? (
 								<Text className="pl-7">{e.body}</Text>
 							) : (
-								<div className="pl-7">
-									<Text>{e.q}</Text>
-									<p className="mt-1.5 max-w-[68ch] border-l-2 border-line pl-3 text-base leading-[1.75] text-nezumi">
-										{e.a}
-									</p>
-								</div>
+								<p className="ml-7 max-w-[68ch] whitespace-pre-wrap border-l-2 border-line pl-3 text-base leading-[1.75] text-nezumi">
+									{e.body}
+								</p>
 							)}
 						</li>
 					),
@@ -777,7 +751,7 @@ export function IssuePanel(p: {
 			: d?.category === "impl_review"
 				? "report"
 				: "request");
-	const openQs = d?.questions.filter((q) => q.state === "open").length ?? 0;
+	const openQs = d?.openQuestions ?? 0;
 	const status = p.project.statuses.find((s) => s.id === d?.issue.statusId);
 	const onTabKey = (e: KeyboardEvent, i: number) => {
 		const n = TABS.length;

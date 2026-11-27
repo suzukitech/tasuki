@@ -1,13 +1,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import {
-	CircleCheck,
-	FilePlus2,
-	Plus,
-	Search,
-	SearchX,
-	UserRound,
-} from "lucide-react";
+import { CircleCheck, FilePlus2, Plus, Search, SearchX } from "lucide-react";
 import {
 	type KeyboardEvent,
 	useCallback,
@@ -44,7 +37,10 @@ import {
 	iconProps,
 	Kbd,
 	Menu,
+	memberOptions,
+	NoAvatar,
 	PriorityGlyph,
+	priorityOptions,
 	Skeleton,
 	StatusDot,
 	TurnBadge,
@@ -88,9 +84,9 @@ function Row(p: {
 	// one line per cell on desktop; on a phone each row stacks (ref + title, then the small facts)
 	const cell =
 		"whitespace-nowrap border-b border-line px-3 align-middle max-md:border-0 max-md:p-0 max-md:text-xs";
-	const edit = (col: Col) =>
-		({
-			status: {
+	const edit = (col: Col) => {
+		if (col === "status")
+			return {
 				label: t("col.status"),
 				options: project.statuses.map((s) => ({
 					value: s.id,
@@ -99,32 +95,22 @@ function Row(p: {
 				})),
 				value: row.statusId,
 				apply: (v: string) => p.onEdit({ row, patch: { statusId: v } }),
-			},
-			assignee: {
+			};
+		if (col === "assignee")
+			return {
 				label: t("col.assignee"),
-				options: [
-					{ value: "", label: t("assignee.none"), icon: <NoAvatar /> },
-					...project.members.map((m) => ({
-						value: m.id,
-						label: m.name,
-						icon: <Avatar id={m.id} name={m.name} />,
-					})),
-				],
+				options: memberOptions(project.members),
 				value: row.assigneeId ?? "",
 				apply: (v: string) =>
 					p.onEdit({ row, patch: { assigneeId: v || null } }),
-			},
-			priority: {
-				label: t("col.priority"),
-				options: PRIORITY_KEYS.map((k, i) => ({
-					value: String(i),
-					label: t(k),
-					icon: <PriorityGlyph level={i} label="" />,
-				})),
-				value: String(priority),
-				apply: (v: string) => p.onEdit({ row, patch: { priority: Number(v) } }),
-			},
-		})[col];
+			};
+		return {
+			label: t("col.priority"),
+			options: priorityOptions(),
+			value: String(priority),
+			apply: (v: string) => p.onEdit({ row, patch: { priority: Number(v) } }),
+		};
+	};
 	const menu = (col: Col, children: React.ReactNode) => {
 		const e = edit(col);
 		return (
@@ -227,15 +213,6 @@ function Row(p: {
 	);
 }
 
-const NoAvatar = () => (
-	<span
-		aria-hidden
-		className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-dashed border-line-strong text-nezumi"
-	>
-		<UserRound size={12} strokeWidth={1.75} />
-	</span>
-);
-
 function SkeletonRows() {
 	return (
 		<div aria-busy="true" className="space-y-px">
@@ -323,17 +300,24 @@ export function ProjectView({
 		return () => window.removeEventListener("keydown", onKey);
 	}, [rows, sel, search.issue, go]);
 
+	const creating = useRef(false);
 	const onCreate = async (e: KeyboardEvent<HTMLInputElement>) => {
 		if (e.key === "Escape") e.currentTarget.blur();
 		if (e.key !== "Enter" || e.nativeEvent.isComposing || !project) return;
+		if (creating.current) return; // one POST at a time: a second Enter must not duplicate
 		const body = buildCreate(draft, ai, project.members);
 		if (!body) return;
+		creating.current = true;
+		const sent = draft;
+		setDraft(""); // cleared before the await; restored on failure
 		try {
 			await api("POST", `/projects/${projectKey}/issues`, body);
-			setDraft("");
 			qc.invalidateQueries({ queryKey: ["issues", projectKey] });
 		} catch (x) {
+			setDraft((now) => now || sent);
 			fail(x);
+		} finally {
+			creating.current = false;
 		}
 	};
 	const onSearch = (e: KeyboardEvent<HTMLInputElement>) => {

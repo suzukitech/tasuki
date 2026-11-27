@@ -16,7 +16,8 @@
 	--selection: color-mix(in srgb, var(--indigo) 6%, var(--surface));
 	--focus: color-mix(in srgb, var(--indigo) 40%, transparent);
 	--sash-tint: color-mix(in srgb, var(--sash) 7%, var(--surface));
-	--indigo-light: #6b86bd;
+	--indigo-light: color-mix(in srgb, var(--indigo) 65%, white);
+	--indigo-deep: color-mix(in srgb, var(--indigo) 80%, black);
 	--done: #2e7d5b;
 	--float:
 		0 1px 2px rgba(31, 41, 51, 0.06), 0 4px 8px rgba(31, 41, 51, 0.06),
@@ -37,6 +38,8 @@
 	--color-selection: var(--selection);
 	--color-sash-tint: var(--sash-tint);
 	--color-done: var(--done);
+	--color-indigo-light: var(--indigo-light);
+	--color-indigo-deep: var(--indigo-deep);
 	--font-sans: "IBM Plex Sans JP", system-ui, sans-serif;
 	--text-xs: 12px;
 	--text-sm: 13px;

@@ -252,7 +252,7 @@ tasuki/
 | plans                | id, issue\_id, version, understanding\_md, steps\_md, risks\_md, state(proposed/approved/rejected/superseded), reviewed\_by, review\_note | 計画は版を重ねる。差し戻すと次の版が出る。新しい版が出た古い版は superseded                                                                            |
 | plan\_criteria       | plan\_id, criterion\_id, step\_ref                                                                                                        | どの手順でどの条件を満たすか                                                                                                                           |
 | reports              | id, issue\_id, plan\_id, summary\_md, decisions\_md, deviations\_md, tests\_md, pr\_url, branch, state(submitted/accepted/returned)       | 実装レポート                                                                                                                                           |
-| questions            | id, issue\_id, asked\_by, body\_md, answer\_md, answered\_by, via, state                                                                  | AI→人間の質問。未回答があると「質問中」                                                                                                                |
+| questions            | id, issue\_id, asked\_by, body\_md, answer\_md, answered\_by, answered\_at, via, state                                                    | AI→人間の質問。未回答があると「質問中」                                                                                                                |
 | agent\_sessions      | id, issue\_id, user\_id, client, started\_at, expires\_at, ended\_at, outcome                                                             | どのAIがいつ作業したか。ended\_atがnullの行はチケットごとに1つだけ（部分ユニーク索引）で、作業ロックを兼ねる。expires\_atは30分でMCP呼び出しごとに延長 |
 | issue\_templates     | id, project\_id, type\_id, body\_template\_md, criteria\_template                                                                         | 種別ごとの書き方の型                                                                                                                                   |
 
@@ -422,7 +422,7 @@ v0.1の画面は、レビューキュー、リスト、ボード、チケット�
 - **アクセシビリティ**: フォーカスは藍のリングで必ず見える。本文はAA以上。アイコンだけのボタンには必ず名前を付ける。一覧は実際の `<table>`。タッチ端末では操作領域を44px以上にする。
 - **文言**: 平易な日本語。ボタンは動詞で言い切る（「計画を承認する」「差し戻す」「完了にする」「コメントする」）。エラーは「何が起きたか」と「どうすればよいか」を書く。空の状態は次の行動に誘う（例: 「チケットはまだありません。C キーでタイトルだけ入れて作れます」）。
 - **実装メモ**: Web は `apps/web`（React + Vite + TanStack Router/Query + Tailwind v4）。文字列は `src/i18n/ja.ts` に集め、`t(key)` で引く。ブラウザでも使う純粋な関数と定数（`whoseTurn`、`reviewerOf`、`parseQuickTitle`、`PRIORITIES`、`STATUS_CATEGORIES`、`EVENT_TYPES`）はzod非依存の `@tasuki/schema/pure` に置き、Webはそこだけから読む（zodをバンドルに入れないため。coreはbun:sqliteに依存しバンドルできない）。`@tasuki/schema` の本体はこれを再エクスポートする。サーバーは `apps/web/dist` を配信し、`/api` と `/mcp` 以外のGETは `index.html` に戻す。ただし `/assets/` 配下や拡張子のあるパスで実ファイルが無いものは404を返す（`index.html` を返さない）。
-- **一覧の取り扱い**: レビューキューのキャッシュは `["review", キー, カテゴリ]` で、一覧（`["issues", ...]`）とは別。1ページを超える場合は「一部しか表示できていません」と注記する。SSEは全イベント種別（`EVENT_TYPES`）を購読し、そのチケットと同じプロジェクトの一覧・レビューキューだけを更新する。一覧の行はラベル名（`labels`）を持つ。取得に失敗したら空の状態ではなくサーバーのエラー文を出す。
+- **一覧の取り扱い**: レビューキューは3つの絞り込み検索（`status:plan_review`、`status:impl_review`、`question:open`）を別々に取得し、チケットIDで重複を除いてから、「あなたの番」のものだけに絞って待ち時間順に並べる。未回答の質問の数はサーバーが返す `openQuestions` を使い、クライアント側で数え直さない。キャッシュは `["review", キー, カテゴリ]` で、一覧（`["issues", ...]`）とは別。1ページを超える場合は「一部しか表示できていません」と注記する。SSEは全イベント種別（`EVENT_TYPES`）を購読し、そのチケットと同じプロジェクトの一覧・レビューキューだけを更新する。一覧の行はラベル名（`labels`）を持つ。取得に失敗したら空の状態ではなくサーバーのエラー文を出す。
 - **依頼タブの下書き**: タイトル・本文・受け入れ条件は、触っていない間はサーバーの値に追従し、触った後は下書きを保つ（他の項目の保存や再取得で消えない）。保存に成功して再取得した後で下書きを破棄する。受け入れ条件の保存後は再取得した条件（id付き）に置き換わる。コメントは送信に成功したときだけ入力欄を空にする。
 - **狭い画面**: 幅768px未満では表をやめ、1行目に番号とタイトル、2行目に状態・担当・優先度・期日と「誰の番」バッジを小さく並べる。キーボード操作の案内は狭い画面とタッチ端末では出さない。
 - **プロジェクトの作成**: サイドバーの「プロジェクトを作る」（キーと名前だけのフォーム）から作る。coreの `createProject` が許す人は誰でも作れる。最初の管理者のセットアップ時に、サンプルプロジェクト（DEMO、管理者がmanager）を同じトランザクションで作る。
@@ -606,3 +606,11 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 | 21  | インストール | better-sqlite3はネイティブモジュールで、`npx` で入れるときにOSやNode.jsのバージョンで失敗しやすい  | 中   | Bun内蔵のSQLiteを使い、単一の実行ファイルで配る                                                              |
 | 22  | 費用         | ドメインやデモ環境の費用が前提になっていた                                                         | 低   | すべてGitHubとnpmの無料枠で完結させる。デモ環境は作らず、READMEにGIF動画を載せる                             |
 | 23  | 文書の整合   | 画面数や「やらないこと」など、方針変更前の記述が残っていた                                         | 低   | 修正済み                                                                                                     |
+
+## Web UI 追記（polish レビュー反映）
+
+- **会話・履歴タブ**: コメント、質問、回答、変更履歴を時刻順に1本の流れで出す。質問は投稿した時刻、回答は `questions.answered_at`（回答した時刻。この列が無い過去の行は投稿時刻で代用）の位置に、それぞれ別の項目として置く。経由タグ（`via`）はコメント、質問、履歴のすべてに出す（設計方針5: AIの操作は必ず履歴で区別できる）。表示名は `lib/format.ts` の `viaLabel` 一つに集め、`ja.ts` の `via.*` を引く（`mcp:<クライアント名>` は「<クライアント名>経由」）。Webは出さない。
+- **変更履歴の値**: `assigneeId` / `approverId` は表示名、`statusId` は状態名、`priority` は優先度の名前、`flow` は「AIに任せる / 人がやる」に直して文にする。IDをそのまま見せない。
+- **ドロップダウン（Menu）**: 開いている間は矢印、Home/End、Enter、Escape、Tab、文字入力のキーをメニューが受け止め、画面全体のショートカットへ伝えない（`[role=listbox]` / `[role=menu]` の中で起きたキーはショートカット側でも無視する）。選択肢が空のときは開かない。外側のクリックで閉じたときは、そのクリックで下の要素を操作させない。
+- **クイック作成**: 送信中は二重送信しない。入力は送信前に退避して空にし、失敗したら戻す。
+- ページの `<main>` は1つだけ。認証ページ（サイドバーの外）だけが自前で `<main>` を持つ。

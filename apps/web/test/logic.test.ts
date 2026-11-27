@@ -5,12 +5,14 @@ import { mapPages, projectOf } from "../src/lib/cache";
 import { criteriaBody, critsOf, shown } from "../src/lib/draft";
 import { etagOf, writeError } from "../src/lib/etag";
 import {
+	activityText,
 	hueOf,
 	initialOf,
 	relativeDue,
 	relativeTime,
 	splitSteps,
 	stepRefs,
+	viaLabel,
 } from "../src/lib/format";
 import { keyAction, shouldHandleKey } from "../src/lib/keys";
 import { PRIORITY_KEYS } from "../src/lib/priority";
@@ -51,6 +53,21 @@ describe("keyboard guard", () => {
 			keyAction({ key: "Enter", target: { tagName: "BUTTON" } }),
 		).toBeNull();
 		expect(keyAction({ key: "j", target: { tagName: "BUTTON" } })).toBe("next");
+	});
+	test("keys inside an open menu never reach the page shortcuts", () => {
+		const inMenu = {
+			tagName: "DIV",
+			closest: (sel: string) => (sel.includes("[role=listbox]") ? {} : null),
+		};
+		expect(keyAction({ key: "Enter", target: inMenu })).toBeNull();
+		expect(keyAction({ key: "j", target: inMenu })).toBeNull();
+		expect(shouldHandleKey({ key: "c", target: inMenu })).toBe(false);
+		expect(
+			shouldHandleKey({
+				key: "c",
+				target: { tagName: "DIV", closest: () => null },
+			}),
+		).toBe(true);
 	});
 	test("null target is fine", () => {
 		expect(keyAction({ key: "c", target: null })).toBe("create");
@@ -299,5 +316,57 @@ describe("display helpers", () => {
 		expect(p.labels).toEqual(["a"]);
 		expect(p.priority).toBe(4);
 		expect(previewQuick("x @nobody", members).assignee).toBeUndefined();
+	});
+});
+
+describe("history text", () => {
+	const ctx = {
+		members: [
+			{ id: "u1", name: "Taro", role: "member" as const },
+			{ id: "u2", name: "Hanako", role: "member" as const },
+		],
+		statuses: [
+			{
+				id: "s1",
+				name: "作業中",
+				category: "in_progress" as const,
+				position: 0,
+			},
+		],
+	};
+	const a = (field: string, before: string | null, after: string | null) =>
+		activityText({ action: "updated", field, before, after }, ctx);
+	test("ids become names / labels", () => {
+		expect(a("assigneeId", "u1", "u2")).toBe(
+			"担当を「Taro」から「Hanako」に変更",
+		);
+		expect(a("assigneeId", null, "u2")).toBe("担当を「Hanako」に設定");
+		expect(a("assigneeId", "u1", null)).toBe(
+			"担当を「Taro」から「未割り当て」に変更",
+		);
+		expect(a("approverId", "zzz", "u1")).toBe(
+			"承認者を「不明なユーザー」から「Taro」に変更",
+		);
+		expect(a("statusId", null, "s1")).toBe("状態を「作業中」に設定");
+		expect(a("priority", "1", "4")).toBe("優先度を「低」から「緊急」に変更");
+		expect(a("flow", "simple", "ai")).toBe(
+			"進め方を「人がやる」から「AIに任せる」に変更",
+		);
+		expect(a("title", "a", "b")).toBe("タイトルを「a」から「b」に変更");
+	});
+	test("plain actions and long values", () => {
+		expect(
+			activityText(
+				{ action: "completed", field: null, before: null, after: null },
+				ctx,
+			),
+		).toBe("完了にした");
+		expect(a("bodyMd", "x", "y".repeat(50))).toBe("本文を更新");
+	});
+	test("via label", () => {
+		expect(viaLabel("mcp:claude-code")).toBe("Claude Code経由");
+		expect(viaLabel("mcp:cursor")).toBe("cursor経由");
+		expect(viaLabel("cli")).toBe("CLI経由");
+		expect(viaLabel("weird")).toBe("weird");
 	});
 });

@@ -1,5 +1,12 @@
 import type { Category } from "@tasuki/schema/pure";
-import { Check, CircleAlert, Info, type LucideIcon, X } from "lucide-react";
+import {
+	Check,
+	CircleAlert,
+	Info,
+	type LucideIcon,
+	UserRound,
+	X,
+} from "lucide-react";
 import {
 	createContext,
 	type KeyboardEvent,
@@ -14,7 +21,9 @@ import {
 import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import { hueOf, initialOf } from "../lib/format";
+import { PRIORITY_KEYS } from "../lib/priority";
 import { TURN_KEY, type Turn } from "../lib/turn";
+import type { Member } from "../lib/types";
 
 export const cx = (...c: (string | false | undefined | null)[]) =>
 	c.filter(Boolean).join(" ");
@@ -40,7 +49,7 @@ export function Button({ kind = "plain", className, ...p }: BtnProps) {
 			className={cx(
 				"inline-flex h-8 items-center justify-center gap-1.5 whitespace-nowrap rounded-control px-3 text-sm font-medium disabled:opacity-50 pointer-coarse:h-11",
 				kind === "primary" &&
-					"bg-ai-indigo text-white enabled:hover:bg-[#1b3366]",
+					"bg-ai-indigo text-white enabled:hover:bg-indigo-deep",
 				kind === "plain" &&
 					"border border-line-strong bg-surface text-ink enabled:hover:bg-row-hover",
 				kind === "danger" &&
@@ -76,22 +85,46 @@ export function IconButton({
 	);
 }
 
+/** Panel body text: 15px / 1.75, about 68 columns wide. */
+export const Text = ({
+	children,
+	className,
+}: {
+	children: string;
+	className?: string;
+}) => (
+	<p
+		className={cx(
+			"max-w-[68ch] whitespace-pre-wrap text-base leading-[1.75]",
+			className,
+		)}
+	>
+		{children}
+	</p>
+);
+
 /** Shortcut hint. Hidden on narrow screens and touch (no keyboard there). */
 export const Kbd = ({ children }: { children: ReactNode }) => (
 	<kbd className="max-md:hidden pointer-coarse:hidden">{children}</kbd>
 );
 
+/** Small tag. tone: quiet (default), ai (via tags) or sash (needs a human). */
 export function Chip({
 	children,
 	className,
+	tone,
 }: {
 	children: ReactNode;
 	className?: string;
+	tone?: "ai" | "sash";
 }) {
 	return (
 		<span
 			className={cx(
-				"inline-flex items-center whitespace-nowrap rounded-chip border border-line-strong px-1.5 text-xs leading-5 text-nezumi",
+				"inline-flex items-center whitespace-nowrap rounded-chip border px-1.5 text-xs leading-5",
+				tone === "ai" && "border-transparent bg-paper text-asagi",
+				tone === "sash" && "border-sash/40 font-medium text-sash",
+				!tone && "border-line-strong text-nezumi",
 				className,
 			)}
 		>
@@ -129,7 +162,7 @@ export function Avatar({
 
 const DOT: Record<Category, string> = {
 	draft: "bg-nezumi",
-	ready: "bg-[#6b86bd]",
+	ready: "bg-indigo-light",
 	plan_review: "bg-sash",
 	impl_review: "bg-sash",
 	in_progress: "bg-asagi",
@@ -253,6 +286,32 @@ export function Skeleton({ className }: { className?: string }) {
 
 export type MenuOption = { value: string; label: string; icon?: ReactNode };
 
+export const NoAvatar = () => (
+	<span
+		aria-hidden
+		className="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-dashed border-line-strong text-nezumi"
+	>
+		<UserRound size={12} strokeWidth={1.75} />
+	</span>
+);
+
+/** 未割り当て + every member (value "" = nobody). */
+export const memberOptions = (members: Member[]): MenuOption[] => [
+	{ value: "", label: t("assignee.none"), icon: <NoAvatar /> },
+	...members.map((m) => ({
+		value: m.id,
+		label: m.name,
+		icon: <Avatar id={m.id} name={m.name} />,
+	})),
+];
+
+export const priorityOptions = (): MenuOption[] =>
+	PRIORITY_KEYS.map((k, i) => ({
+		value: String(i),
+		label: t(k),
+		icon: <PriorityGlyph level={i} label="" />,
+	}));
+
 /**
  * Button + listbox popover (replaces a native <select>). Arrow keys / Home / End move,
  * Enter or Space picks, Esc and Tab close, and focus returns to the button.
@@ -277,7 +336,7 @@ export function Menu(p: {
 	}, []);
 	const open = () => {
 		const r = btn.current?.getBoundingClientRect();
-		if (!r) return;
+		if (!r || p.options.length === 0) return;
 		const h = Math.min(p.options.length * 32 + 8, 280);
 		const up = r.bottom + h + 8 > window.innerHeight && r.top > h;
 		setActive(
@@ -298,19 +357,35 @@ export function Menu(p: {
 	useEffect(() => {
 		if (!isOpen) return;
 		list.current?.focus({ preventScroll: true });
+		const eatClick = (e: Event) => {
+			e.stopPropagation();
+			e.preventDefault();
+		};
 		const away = (e: Event) => {
 			const n = e.target as Node;
-			if (!list.current?.contains(n) && !btn.current?.contains(n)) close(false);
+			if (list.current?.contains(n) || btn.current?.contains(n)) return;
+			close(false);
+			// the click that dismisses must not also activate what is underneath
+			document.addEventListener("click", eatClick, {
+				capture: true,
+				once: true,
+			});
+			setTimeout(
+				() => document.removeEventListener("click", eatClick, true),
+				500,
+			);
 		};
 		const scrolled = (e: Event) => {
 			if (!list.current?.contains(e.target as Node)) close(false);
 		};
 		document.addEventListener("pointerdown", away);
 		window.addEventListener("scroll", scrolled, true);
-		window.addEventListener("resize", () => close(false));
+		const resized = () => close(false);
+		window.addEventListener("resize", resized);
 		return () => {
 			document.removeEventListener("pointerdown", away);
 			window.removeEventListener("scroll", scrolled, true);
+			window.removeEventListener("resize", resized);
 		};
 	}, [isOpen, close]);
 	const pick = (v: string) => {
@@ -319,6 +394,9 @@ export function Menu(p: {
 	};
 	const onKey = (e: KeyboardEvent) => {
 		const n = p.options.length;
+		if (n === 0) return close();
+		// the menu owns every key it can see: none may reach the page shortcuts
+		e.stopPropagation();
 		const go = (i: number) => {
 			e.preventDefault();
 			setActive((i + n) % n);
@@ -332,9 +410,16 @@ export function Menu(p: {
 			pick(p.options[active]?.value ?? p.value);
 		} else if (e.key === "Escape") {
 			e.preventDefault();
-			e.stopPropagation(); // do not also close the issue panel
 			close();
 		} else if (e.key === "Tab") close(false);
+		else if (e.key.length === 1 && !e.metaKey && !e.ctrlKey && !e.altKey) {
+			// type-ahead: next option whose label starts with the typed letter
+			const c = e.key.toLowerCase();
+			for (let k = 1; k <= n; k++) {
+				const i = (active + k) % n;
+				if (p.options[i]?.label.toLowerCase().startsWith(c)) return go(i);
+			}
+		}
 	};
 	return (
 		<>
