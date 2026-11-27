@@ -1,8 +1,10 @@
-import { resolve, sep } from "node:path";
+import { mkdir, unlink } from "node:fs/promises";
+import { join, resolve, sep } from "node:path";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import {
 	type Actor,
 	acceptInvite,
+	addAttachment,
 	addComment,
 	addMember,
 	answerQuestion,
@@ -15,17 +17,26 @@ import {
 	createInvite,
 	createIssue,
 	createProject,
+	createTemplate,
+	createWebhook,
 	deleteIssue,
+	deleteTemplate,
+	deleteWebhook,
 	destroySession,
 	etagOf,
 	fail,
+	getAttachment,
 	getIssue,
 	getMe,
 	listActivities,
 	listApiTokens,
 	listComments,
+	listNotifications,
 	listProjects,
+	listTemplates,
+	listWebhooks,
 	login,
+	markNotificationsRead,
 	moveIssue,
 	needsSetup,
 	pageIssues,
@@ -35,16 +46,20 @@ import {
 	rejectPlan,
 	removeMember,
 	renameStatus,
+	requireAttach,
 	resolveSession,
 	resolveToken,
 	returnReport,
 	revokeApiToken,
 	setupFirstAdmin,
 	sha256,
+	sniffImage,
 	TasukiError,
 	updateCriteria,
 	updateIssue,
 	updateProject,
+	updateTemplate,
+	webhookForTest,
 } from "@tasuki/core";
 import type { Db } from "@tasuki/db";
 import { createMcpServer } from "@tasuki/mcp";
@@ -59,11 +74,13 @@ import {
 	noteBody,
 	optNoteBody,
 } from "@tasuki/schema";
+import { ATTACHMENT_MAX, ATTACHMENT_TYPES } from "@tasuki/schema/pure";
 import { type Context, Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { type SSEStreamingApi, streamSSE } from "hono/streaming";
 import { createEvents } from "./events";
+import { createWebhooks } from "./webhooks";
 
 type Cred = { kind: "session" | "token"; hash: string };
 type Env = {
@@ -152,6 +169,12 @@ function rateLimiter(windowMs = 60_000) {
 }
 
 const MAX_BODY = 1_000_000;
+/** The one route whose body may exceed MAX_BODY and need not be JSON (an image's bytes). */
+const ATTACH = /^\/api\/v1\/issues\/[^/]+\/attachments$/;
+const IMAGE_CT = new Set<string>(ATTACHMENT_TYPES);
+const ctOf = (c: C) =>
+	(c.req.header("content-type") ?? "").split(";")[0]?.trim().toLowerCase() ??
+	"";
 const bearerOf = (c: C) =>
 	/^Bearer\s+(\S+)$/i.exec(c.req.header("authorization") ?? "")?.[1];
 
@@ -186,6 +209,9 @@ export function createApp(
 		trustProxy?: boolean;
 		/** Built SPA (apps/web/dist). Absent or missing on disk: nothing is served. */
 		webDir?: string;
+		/** Attachments live in `<dataDir>/attachments/`. */
+		dataDir?: string;
+		webhook?: Omit<Parameters<typeof createWebhooks>[1], "baseUrl">;
 	},
 ) {
 	const baseUrl = opts.baseUrl.replace(/\/$/, "");
@@ -195,6 +221,13 @@ export function createApp(
 	const limiter = rateLimiter();
 	const origin = new URL(baseUrl).origin;
 	const events = createEvents();
+	const hooks = createWebhooks(db, { baseUrl, ...opts.webhook });
+	const dataDir = resolve(opts.dataDir ?? "./tasuki-data");
+	/** After commit: stream to subscribers, then notify webhooks (async, never blocks). */
+	const emit = (e: Parameters<typeof events.publish>[0]) => {
+		events.publish(e);
+		hooks.dispatch(e);
+	};
 	const app = new Hono<Env>();
 	const api = new Hono<Env>();
 
@@ -257,7 +290,10 @@ export function createApp(
 			const post = c.req.method === "POST";
 			if (
 				(c.req.raw.body !== null || (isPublic && post)) &&
-				!JSON_CT.test(c.req.header("content-type") ?? "")
+				!JSON_CT.test(c.req.header("content-type") ?? "") &&
+				// image uploads: a cross-site form cannot send image/* (and fetch needs a
+				// preflight), and the CSRF header below is still required
+				!(post && ATTACH.test(c.req.path) && IMAGE_CT.has(ctOf(c)))
 			)
 				throw new TasukiError(
 					"unsupported_media",
@@ -287,7 +323,7 @@ export function createApp(
 		}
 		if (!actor)
 			throw new TasukiError("unauthorized", "authentication required");
-		c.set("ctx", { db, actor, emit: events.publish });
+		c.set("ctx", { db, actor, emit });
 		return next();
 	});
 
@@ -360,6 +396,18 @@ export function createApp(
 		return c.body(null, 204);
 	});
 
+	// --- notifications (own data) ---
+	api.get("/me/notifications", (c) => {
+		const n = Number(c.req.query("limit"));
+		return c.json(
+			listNotifications(ctxOf(c), Number.isInteger(n) && n > 0 ? n : 30),
+		);
+	});
+	api.post("/me/notifications/read", async (c) => {
+		markNotificationsRead(ctxOf(c), await json(c));
+		return c.body(null, 204);
+	});
+
 	// --- projects ---
 	api.get("/projects", (c) => c.json(listProjects(ctxOf(c))));
 	api.post("/projects", async (c) =>
@@ -398,6 +446,40 @@ export function createApp(
 			),
 		),
 	);
+	api.get("/projects/:key/webhooks", (c) =>
+		c.json(listWebhooks(ctxOf(c), c.req.param("key"))),
+	);
+	api.post("/projects/:key/webhooks", async (c) =>
+		c.json(createWebhook(ctxOf(c), c.req.param("key"), await json(c)), 201),
+	);
+	api.delete("/projects/:key/webhooks/:id", (c) => {
+		deleteWebhook(ctxOf(c), c.req.param("key"), c.req.param("id"));
+		return c.body(null, 204);
+	});
+	api.post("/projects/:key/webhooks/:id/test", async (c) => {
+		const w = webhookForTest(ctxOf(c), c.req.param("key"), c.req.param("id"));
+		return c.json(await hooks.test(w.url));
+	});
+	api.get("/projects/:key/templates", (c) =>
+		c.json(listTemplates(ctxOf(c), c.req.param("key"))),
+	);
+	api.post("/projects/:key/templates", async (c) =>
+		c.json(createTemplate(ctxOf(c), c.req.param("key"), await json(c)), 201),
+	);
+	api.patch("/projects/:key/templates/:id", async (c) =>
+		c.json(
+			updateTemplate(
+				ctxOf(c),
+				c.req.param("key"),
+				c.req.param("id"),
+				await json(c),
+			),
+		),
+	);
+	api.delete("/projects/:key/templates/:id", (c) => {
+		deleteTemplate(ctxOf(c), c.req.param("key"), c.req.param("id"));
+		return c.body(null, 204);
+	});
 	api.get("/projects/:key/issues", (c) => {
 		const q = parse(listQuery, c.req.query());
 		return c.json(pageIssues(ctxOf(c), c.req.param("key"), q.q, q));
@@ -423,8 +505,69 @@ export function createApp(
 		return c.json(i);
 	});
 	api.delete("/issues/:ref", (c) => {
-		deleteIssue(ctxOf(c), c.req.param("ref"));
+		for (const p of deleteIssue(ctxOf(c), c.req.param("ref")))
+			void unlink(join(dataDir, p)).catch(() => {});
 		return c.body(null, 204);
+	});
+	api.post("/issues/:ref/attachments", async (c) => {
+		const ref = c.req.param("ref");
+		const ctx = ctxOf(c);
+		requireAttach(ctx, ref); // permission before a single body byte is read
+		const len = Number(c.req.header("content-length") ?? 0);
+		if (len > ATTACHMENT_MAX)
+			throw new TasukiError("too_large", "image over 10 MB");
+		const chunks: Uint8Array[] = [];
+		let size = 0;
+		const reader = c.req.raw.body?.getReader();
+		for (;;) {
+			const r = await reader?.read();
+			if (!r || r.done) break;
+			size += r.value.byteLength;
+			if (size > ATTACHMENT_MAX) {
+				void reader?.cancel();
+				throw new TasukiError("too_large", "image over 10 MB");
+			}
+			chunks.push(r.value);
+		}
+		if (!size) throw new TasukiError("invalid", "empty body");
+		const bytes = new Uint8Array(size);
+		let at = 0;
+		for (const ch of chunks) {
+			bytes.set(ch, at);
+			at += ch.byteLength;
+		}
+		const contentType = sniffImage(bytes);
+		if (!contentType)
+			throw new TasukiError(
+				"unsupported_media",
+				"only png, jpeg, gif and webp images are accepted",
+			);
+		const id = Bun.randomUUIDv7();
+		const path = join("attachments", id);
+		await mkdir(join(dataDir, "attachments"), { recursive: true });
+		await Bun.write(join(dataDir, path), bytes);
+		try {
+			const row = addAttachment(ctx, ref, {
+				id,
+				filename: c.req.query("filename") ?? "",
+				size,
+				contentType,
+				path,
+			});
+			return c.json(
+				{
+					id: row.id,
+					filename: row.filename,
+					size: row.size,
+					contentType: row.contentType,
+					url: `/api/v1/attachments/${row.id}`,
+				},
+				201,
+			);
+		} catch (e) {
+			await unlink(join(dataDir, path)).catch(() => {});
+			throw e;
+		}
 	});
 	api.post(
 		"/issues/:ref/move",
@@ -478,6 +621,28 @@ export function createApp(
 		),
 	);
 
+	api.get("/attachments/:id", async (c) => {
+		const a = getAttachment(ctxOf(c), c.req.param("id"));
+		const file = Bun.file(join(dataDir, a.path));
+		if (!(await file.exists()))
+			throw new TasukiError("not_found", "attachment file is missing");
+		// attr-char (RFC 8187) leaves ' ( ) * alone; encode them too
+		const name = encodeURIComponent(a.filename).replace(
+			/['()*]/g,
+			(ch) => `%${ch.charCodeAt(0).toString(16).toUpperCase()}`,
+		);
+		return new Response(file, {
+			headers: {
+				"content-type": a.contentType,
+				"content-length": String(a.size),
+				"x-content-type-options": "nosniff",
+				"content-disposition": `inline; filename*=UTF-8''${name}`,
+				"cache-control": "private",
+				"content-security-policy": "default-src 'none'",
+			},
+		});
+	});
+
 	// --- SSE ---
 	api.get("/events", (c) => {
 		let stream: SSEStreamingApi | undefined;
@@ -527,15 +692,15 @@ export function createApp(
 		const actor = bearerActor(c, token, "mcp:mcp");
 		if (!actor)
 			throw new TasukiError("unauthorized", "authentication required");
-		c.set("ctx", { db, actor, emit: events.publish });
+		c.set("ctx", { db, actor, emit });
 		return next();
 	});
-	app.use(
-		"*",
-		bodyLimit({
-			maxSize: MAX_BODY,
-			onError: () => problem(413, "too_large", "request body too large"),
-		}),
+	const limit = bodyLimit({
+		maxSize: MAX_BODY,
+		onError: () => problem(413, "too_large", "request body too large"),
+	});
+	app.use("*", (c, next) =>
+		ATTACH.test(c.req.path) ? next() : limit(c, next),
 	);
 	app.all("/mcp", async (c) => {
 		if (c.req.method !== "POST")

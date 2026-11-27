@@ -1,3 +1,6 @@
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { setMember } from "@tasuki/core";
 import { openDb } from "@tasuki/db";
 import { createApp } from "../src/app";
@@ -14,13 +17,21 @@ type Init = {
 
 /** App over an in-memory db with a request helper. */
 export function harness(
-	opts: { baseUrl?: string; rateLimit?: number; trustProxy?: boolean } = {},
+	opts: {
+		baseUrl?: string;
+		rateLimit?: number;
+		trustProxy?: boolean;
+		webhook?: Parameters<typeof createApp>[1]["webhook"];
+	} = {},
 ) {
 	const db = openDb(":memory:");
+	const dataDir = mkdtempSync(join(tmpdir(), "tasuki-test-"));
 	const app = createApp(db, {
 		baseUrl: opts.baseUrl ?? "http://localhost:3000",
 		rateLimit: opts.rateLimit,
 		trustProxy: opts.trustProxy,
+		dataDir,
+		webhook: opts.webhook,
 	});
 	const call = (method: string, path: string, i: Init = {}) =>
 		app.request(`/api/v1${path}`, {
@@ -98,5 +109,5 @@ export function harness(
 			role,
 		);
 	};
-	return { db, app, call, signIn, setup, addUser, member };
+	return { db, app, dataDir, call, signIn, setup, addUser, member };
 }

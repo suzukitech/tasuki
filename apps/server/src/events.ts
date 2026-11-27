@@ -69,6 +69,8 @@ export function createEvents() {
 		publish(e: IssueEvent) {
 			const ev = { ...e, at: new Date().toISOString() };
 			for (const s of [...subs]) {
+				// user-scoped (notifications): only that user's own streams, ever
+				if (e.userId && s.ctx.actor.userId !== e.userId) continue;
 				if (!cached(s, "cred", () => alive(s))) {
 					kill(s);
 					continue;

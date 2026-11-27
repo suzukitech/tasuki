@@ -40,6 +40,7 @@ const STATUS = {
 	csrf: 403,
 	unsupported_media: 415,
 	rate_limited: 429,
+	too_large: 413,
 } as const;
 
 export class TasukiError extends Error {

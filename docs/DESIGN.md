@@ -644,7 +644,7 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 - プロジェクト管理者が設定する（セッションのみ。URLは秘密なのでトークンでは触れない）。`GET/POST /projects/:key/webhooks`、`DELETE /projects/:key/webhooks/:id`、`POST /projects/:key/webhooks/:id/test`。
 - 通知する出来事は固定の6つから選ぶ: `plan.submitted` / `report.submitted` / `question.asked` / `question.answered` / `issue.assigned` / `issue.completed`。`issue.assigned` は担当者が変わったときに足した新しいイベント種別。
 - 本文は Slack 互換の `{text}`（Discord は URL の末尾に `/slack` を付ければ受けられる）。日本語で、チケット番号、タイトル、何が起きたか、リンク（`TASUKI_BASE_URL`）を入れる。`& < >` はエスケープする。
-- 送信はコミット後に非同期（`ctx.emit` の後ろで走り、リクエストを待たせず、失敗させない）。`fetch` は5秒のタイムアウト（`AbortSignal.timeout`）、`redirect: "manual"`（3xxは失敗扱い）、リトライはネットワークエラーと5xxに1回だけ。失敗のログはWebhookのIDだけで、**URLは決して出さない**（秘密のため）。
+- 送信はコミット後に非同期（`ctx.emit` の後ろで走り、リクエストを待たせず、失敗させない）。`fetch` は5秒のタイムアウト（`AbortSignal.timeout`）、`redirect: "manual"`（3xxは失敗扱い）、リトライはネットワークエラーとタイムアウトに1回だけ（相手が応答したなら、5xxでも再送しない）。失敗のログはWebhookのIDだけで、**URLは決して出さない**（秘密のため）。
 - SSRF対策: スキームは http / https のみ。送信のたびにホスト名を解決（`dns.lookup`）し、**全アドレス**がループバック・プライベート・リンクローカル・CGNAT・メタデータ（169.254.0.0/16）・ユニークローカル（fc00::/7）・IPv4射影（`::ffff:`）でないことを確かめる。1つでも該当すれば送らない。自前のMattermostなど社内向けは `TASUKI_WEBHOOK_ALLOW_PRIVATE=1` で許す。トレードオフ（上限）: 検査と `fetch` の間で名前の再解決が起きるので、DNSリバインディングの隙は残る。接続先IPの固定は、TLSの検証と両立させるのが面倒なのでしていない。リダイレクトを追わないので、ホスト名が正当でも他へ飛ばされる経路はない。
 - URLは作成後は返さない。一覧は `https://host/…末尾4文字` に伏せたものだけ。作成時の応答も伏せたものを返す。入力したのは本人だから困らない。
 - 設定画面: プロジェクトの設定に「Webhook」を置く。追加（URL＋出来事のチェック）、テスト送信（結果を日本語で表示）、削除（画面内の確認）。テスト送信は成功、拒否（アドレス）、タイムアウト、相手の応答エラーを区別して返す。
@@ -666,5 +666,5 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 ### テンプレート
 
 - `issue_templates`（名前、種別、本文の型、条件の型）をプロジェクト管理者がCRUDする（`GET/POST /projects/:key/templates`、`PATCH/DELETE /projects/:key/templates/:id`。管理者のみ、セッションのみ。一覧はメンバーも読める）。種別は任意。
-- 新規作成とクイック作成から、テンプレートを選ぶと本文（と受け入れ条件の案は空欄のヒントとして本文に足さず、今回は本文だけ）を埋める。強制はしない。
+- 新規作成の入力欄から、テンプレートを選ぶと本文を埋める（クイック作成は1行入力なのでテンプレートの選択肢は出さない）。受け入れ条件の型（`criteria_template`）は今回は使わない。強制はしない。
 
