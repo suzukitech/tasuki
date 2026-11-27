@@ -8,7 +8,7 @@ export class ApiError extends Error {
 	}
 }
 
-const csrf = () =>
+export const csrfToken = () =>
 	/(?:^|; )tasuki_csrf=([^;]*)/.exec(
 		typeof document === "undefined" ? "" : document.cookie,
 	)?.[1];
@@ -22,7 +22,7 @@ export async function api<T>(
 ): Promise<T> {
 	const h: Record<string, string> = { ...headers };
 	if (body !== undefined) h["content-type"] = "application/json";
-	const token = csrf();
+	const token = csrfToken();
 	if (token && method !== "GET") h["x-tasuki-csrf"] = token;
 	const res = await fetch(`/api/v1${path}`, {
 		method,

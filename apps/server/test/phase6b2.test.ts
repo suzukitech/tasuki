@@ -286,7 +286,7 @@ describe("webhooks over REST", () => {
 			await (
 				await w.a.req("POST", `/projects/WEB/webhooks/${made.id}/test`)
 			).json(),
-		).toEqual({ ok: false, reason: "http" });
+		).toEqual({ ok: false, reason: "failed" });
 
 		const priv = await (
 			await w.a.req("POST", "/projects/WEB/webhooks", {
@@ -339,6 +339,136 @@ describe("webhooks over REST", () => {
 		expect(logged).toContain(`webhook ${made.id} delivery failed: network`);
 		expect(logged).not.toContain("SECRET");
 		err.mockRestore();
+	});
+});
+
+describe("webhook delivery is pinned to the checked address", () => {
+	test("http: connects to the IP literal with the original Host; one lookup only", async () => {
+		const seen: { url: string; host: string; redirect?: string }[] = [];
+		let lookups = 0;
+		const h = harness({
+			webhook: {
+				fetch: (async (url: string, init: RequestInit) => {
+					seen.push({
+						url,
+						host: (init.headers as Record<string, string>).host as string,
+						redirect: init.redirect,
+					});
+					return new Response("secret body", { status: 200 });
+				}) as unknown as typeof fetch,
+				// first answer public; a rebinding server would answer 127.0.0.1 the second time
+				lookup: async () =>
+					++lookups === 1 ? ["93.184.216.34"] : ["127.0.0.1"],
+			},
+		});
+		const a = await h.setup();
+		await a.req("POST", "/projects", { key: "WEB", name: "Web" });
+		const hook = await (
+			await a.req("POST", "/projects/WEB/webhooks", {
+				url: "http://hook.example.test:8080/a/b?x=1",
+				events: ["plan.submitted"],
+			})
+		).json();
+		const res = await a.req("POST", `/projects/WEB/webhooks/${hook.id}/test`);
+		const body = await res.json();
+		expect(body).toEqual({ ok: true }); // nothing of the response leaks
+		expect(seen).toEqual([
+			{
+				url: "http://93.184.216.34:8080/a/b?x=1",
+				host: "hook.example.test:8080",
+				redirect: "manual",
+			},
+		]);
+		expect(lookups).toBe(1);
+	});
+
+	test("test-send exposes only ok / blocked / failed, never why", async () => {
+		const mk = (f: () => Response | never) =>
+			harness({
+				webhook: {
+					fetch: (async () => f()) as unknown as typeof fetch,
+					lookup: async () => ["93.184.216.34"],
+				},
+			});
+		for (const f of [
+			() => new Response("<html>internal admin</html>", { status: 500 }),
+			() =>
+				new Response("", {
+					status: 302,
+					headers: { location: "http://10.0.0.1/" },
+				}),
+			() => {
+				throw Object.assign(new Error("ECONNREFUSED"), {
+					code: "ECONNREFUSED",
+				});
+			},
+			() => {
+				throw Object.assign(new Error("t"), { name: "TimeoutError" });
+			},
+		]) {
+			const h = mk(f);
+			const a = await h.setup();
+			await a.req("POST", "/projects", { key: "WEB", name: "Web" });
+			const hook = await (
+				await a.req("POST", "/projects/WEB/webhooks", {
+					url: "https://x.example.test/h",
+					events: ["plan.submitted"],
+				})
+			).json();
+			expect(
+				await (
+					await a.req("POST", `/projects/WEB/webhooks/${hook.id}/test`)
+				).json(),
+			).toEqual({ ok: false, reason: "failed" });
+		}
+	});
+
+	test("https: real TLS to the pinned IP, certificate checked against the host name", async () => {
+		const dir = join(import.meta.dir, "fixtures");
+		const ca = await Bun.file(join(dir, "hook.pem")).text();
+		const got: string[] = [];
+		const srv = Bun.serve({
+			port: 0,
+			tls: {
+				key: Bun.file(join(dir, "hook.key")),
+				cert: Bun.file(join(dir, "hook.pem")),
+			},
+			fetch: (r) => {
+				got.push(r.headers.get("host") ?? "");
+				return new Response("hi");
+			},
+		});
+		try {
+			const run = async (host: string) => {
+				const h = harness({
+					webhook: {
+						allowPrivate: true, // the fixture server is on loopback
+						lookup: async () => ["127.0.0.1"],
+						tls: { ca },
+					},
+				});
+				const a = await h.setup();
+				await a.req("POST", "/projects", { key: "WEB", name: "Web" });
+				const hook = await (
+					await a.req("POST", "/projects/WEB/webhooks", {
+						url: `https://${host}:${srv.port}/h`,
+						events: ["plan.submitted"],
+					})
+				).json();
+				return (await (
+					await a.req("POST", `/projects/WEB/webhooks/${hook.id}/test`)
+				).json()) as { ok: boolean };
+			};
+			expect(await run("hook.example.test")).toEqual({ ok: true });
+			expect(got).toEqual([`hook.example.test:${srv.port}`]);
+			// the certificate is for hook.example.test: any other name must fail verification
+			expect(await run("evil.example.test")).toEqual({
+				ok: false,
+				reason: "failed",
+			});
+		} finally {
+			srv.stop(true);
+		}
 	});
 });
 

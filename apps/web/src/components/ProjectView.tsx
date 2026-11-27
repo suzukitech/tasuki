@@ -302,6 +302,8 @@ export function ProjectView({
 	const [sel, setSel] = useState(-1);
 	const [ai, setAi] = useState(true);
 	const [draft, setDraft] = useState("");
+	const [tpl, setTpl] = useState("");
+	const templates = useTemplates(projectKey).data ?? [];
 	const [searching, setSearching] = useState(false);
 	const createRef = useRef<HTMLInputElement>(null);
 	const searchRef = useRef<HTMLInputElement>(null);
@@ -345,8 +347,10 @@ export function ProjectView({
 		if (e.key === "Escape") e.currentTarget.blur();
 		if (e.key !== "Enter" || e.nativeEvent.isComposing || !project) return;
 		if (creating.current) return; // one POST at a time: a second Enter must not duplicate
-		const body = buildCreate(draft, ai, project.members);
-		if (!body) return;
+		const made = buildCreate(draft, ai, project.members);
+		if (!made) return;
+		const tplBody = templates.find((x) => x.id === tpl)?.bodyTemplateMd;
+		const body = tplBody ? { ...made, bodyMd: tplBody } : made;
 		creating.current = true;
 		const sent = draft;
 		setDraft(""); // cleared before the await; restored on failure
@@ -357,6 +361,7 @@ export function ProjectView({
 				body,
 			);
 			qc.invalidateQueries({ queryKey: ["issues", projectKey] });
+			setTpl("");
 		} catch (x) {
 			setDraft((now) => now || sent);
 			fail(x);
@@ -486,6 +491,24 @@ export function ProjectView({
 								onChange={setAi}
 								label={t("list.create.flow")}
 							/>
+							{templates.length > 0 && (
+								<Menu
+									label={t("tpl.pick")}
+									value={tpl}
+									options={[
+										{ value: "", label: t("tpl.none") },
+										...templates.map((x) => ({ value: x.id, label: x.name })),
+									]}
+									onChange={setTpl}
+									className="min-h-8 px-2 text-sm text-nezumi"
+								>
+									{tpl
+										? t("tpl.quick", {
+												name: templates.find((x) => x.id === tpl)?.name ?? "",
+											})
+										: t("tpl.pick")}
+								</Menu>
+							)}
 						</div>
 						{chips.length > 0 && (
 							<div

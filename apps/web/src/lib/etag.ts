@@ -28,6 +28,8 @@ export function writeError(e: unknown, ctx: WriteContext = {}): WriteError {
 	const lead = ctx.prefix ?? "";
 	const m = e.message;
 	const body = (() => {
+		if (e.status === 413) return t("toast.tooBig");
+		if (e.status === 415) return t("toast.badType");
 		if (e.status === 403) return t("toast.forbidden");
 		if (e.code === "gate" && /review state/.test(m))
 			return t("toast.leaveReview");

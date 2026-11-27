@@ -77,6 +77,8 @@ type Opts = {
 	/** every address the host resolves to */
 	lookup?: (host: string) => Promise<string[]>;
 	retryMs?: number;
+	/** extra TLS options for https deliveries (tests: a private CA) */
+	tls?: Record<string, unknown>;
 };
 
 export function createWebhooks(db: Db, o: Opts) {
@@ -87,27 +89,38 @@ export function createWebhooks(db: Db, o: Opts) {
 			(await lookup(h, { all: true })).map((a) => a.address));
 
 	/**
-	 * One POST. The host is resolved here, at send time, and EVERY address must be public.
-	 * ponytail: fetch resolves again, so a DNS-rebinding server could answer differently the
-	 * second time. Pin the connection to the checked IP if that threat matters.
+	 * One POST, pinned to the address that was checked. The host is resolved here, every
+	 * address must be public (unless private is allowed), and the connection then goes to that
+	 * IP literal itself, so a second DNS answer (rebinding) can never redirect it. http sends the
+	 * original `Host`; https also sets the TLS server name, so the certificate is still verified
+	 * against the real host name.
 	 */
 	async function post(url: string, text: string): Promise<Sent> {
 		try {
 			const u = new URL(url);
 			if (u.protocol !== "http:" && u.protocol !== "https:")
 				return { ok: false, reason: "blocked" };
-			if (!o.allowPrivate) {
-				const addrs = await resolve(u.hostname.replace(/^\[|\]$/g, ""));
-				if (!addrs.length || addrs.some(isPrivateIp))
-					return { ok: false, reason: "blocked" };
-			}
-			const res = await doFetch(url, {
+			const name = u.hostname.replace(/^\[|\]$/g, "");
+			const addrs = await resolve(name);
+			if (!addrs.length || (!o.allowPrivate && addrs.some(isPrivateIp)))
+				return { ok: false, reason: "blocked" };
+			const ip = addrs[0] as string;
+			const literal = isIP(name) !== 0;
+			const pinned = new URL(url);
+			pinned.hostname = isIP(ip) === 6 ? `[${ip}]` : ip;
+			const res = await doFetch(pinned.href, {
 				method: "POST",
-				headers: { "content-type": "application/json" },
+				headers: {
+					"content-type": "application/json",
+					host: u.host,
+				},
 				body: JSON.stringify({ text }),
 				redirect: "manual",
 				signal: AbortSignal.timeout(5000),
-			});
+				...(u.protocol === "https:" && {
+					tls: { ...o.tls, ...(!literal && { serverName: name }) },
+				}),
+			} as RequestInit);
 			await res.body?.cancel().catch(() => {});
 			return res.status >= 200 && res.status < 300
 				? { ok: true }
@@ -144,6 +157,18 @@ export function createWebhooks(db: Db, o: Opts) {
 				console.error("webhook dispatch failed");
 			}
 		},
-		test: (url: string) => post(url, testText()),
+		/**
+		 * Test-send result for the settings screen. Deliberately coarse: only ok, refused
+		 * address, or failed. Timeout vs refused vs HTTP status would let a manager probe
+		 * internal hosts, and the response itself is never read or returned.
+		 */
+		async test(
+			url: string,
+		): Promise<{ ok: true } | { ok: false; reason: "blocked" | "failed" }> {
+			const r = await post(url, testText());
+			return r.ok
+				? { ok: true }
+				: { ok: false, reason: r.reason === "blocked" ? "blocked" : "failed" };
+		},
 	};
 }

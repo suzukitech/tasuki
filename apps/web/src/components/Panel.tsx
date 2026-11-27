@@ -23,6 +23,7 @@ import {
 	stepRefs,
 	viaLabel,
 } from "../lib/format";
+import { safeUrl } from "../lib/markdown";
 import { refreshIssue, useIssue, useWriteFailure } from "../lib/queries";
 import { turnOf } from "../lib/turn";
 import type {
@@ -33,6 +34,8 @@ import type {
 	ProjectDetail,
 } from "../lib/types";
 import { Field } from "./Form";
+import { MarkdownEditor } from "./MarkdownEditor";
+import { TemplatePicker } from "./TemplatePicker";
 import {
 	Avatar,
 	Button,
@@ -181,13 +184,19 @@ function RequestTab({
 			<label className={label} htmlFor="f-body">
 				{t("req.body")}
 			</label>
-			<textarea
+			<MarkdownEditor
 				id="f-body"
 				rows={8}
-				className={cx(inputCls, "leading-relaxed")}
+				issueRef={d.ref}
 				value={body}
-				onChange={(e) => setDraft((x) => ({ ...x, body: e.target.value }))}
+				onChange={(v) => setDraft((x) => ({ ...x, body: v }))}
 			/>
+			{!body.trim() && (
+				<TemplatePicker
+					projectKey={project.key}
+					onPick={(md) => setDraft((x) => ({ ...x, body: md }))}
+				/>
+			)}
 			<Button
 				kind="primary"
 				className="mt-2"
@@ -459,8 +468,6 @@ function PlanTab({ d }: { d: IssueDetail }) {
 	);
 }
 
-const safeUrl = (u: string) => (/^https?:\/\//i.test(u) ? u : undefined);
-
 const RESULT_ICON = {
 	met: [CircleCheck, "text-asagi"],
 	unmet: [CircleX, "text-sash"],
@@ -478,9 +485,9 @@ function CriterionResult({ c }: { c: Criterion }) {
 				<p className={cx("text-xs font-medium", color)}>
 					{t(`result.${c.result}`)}
 				</p>
-				<p className="mt-0.5 text-nezumi">
+				<Text className="mt-0.5 text-nezumi">
 					{c.evidenceMd || t("result.noEvidence")}
-				</p>
+				</Text>
 			</div>
 		</li>
 	);
@@ -705,22 +712,23 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 							{e.k !== "answer" ? (
 								<Text className="pl-7">{e.body}</Text>
 							) : (
-								<p className="ml-7 max-w-[68ch] whitespace-pre-wrap border-l-2 border-line pl-3 text-base leading-[1.75] text-nezumi">
+								<Text className="ml-7 border-l-2 border-line pl-3 text-nezumi">
 									{e.body}
-								</p>
+								</Text>
 							)}
 						</li>
 					),
 				)}
 			</ol>
 			<div className="mt-6">
-				<textarea
+				<MarkdownEditor
+					id="f-comment"
 					rows={3}
-					className={inputCls}
-					aria-label={t("thread.comment.placeholder")}
+					issueRef={d.ref}
+					label={t("thread.comment.placeholder")}
 					placeholder={t("thread.comment.placeholder")}
 					value={text}
-					onChange={(e) => setText(e.target.value)}
+					onChange={setText}
 				/>
 				<Button
 					kind="primary"

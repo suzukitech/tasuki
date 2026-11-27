@@ -24,6 +24,7 @@ import { hueOf, initialOf } from "../lib/format";
 import { PRIORITY_KEYS } from "../lib/priority";
 import { TURN_KEY, type Turn } from "../lib/turn";
 import type { Member } from "../lib/types";
+import { Markdown } from "./Markdown";
 
 export const cx = (...c: (string | false | undefined | null)[]) =>
 	c.filter(Boolean).join(" ");
@@ -85,7 +86,7 @@ export function IconButton({
 	);
 }
 
-/** Panel body text: 15px / 1.75, about 68 columns wide. */
+/** Panel body text: 15px / 1.75, about 68 columns wide. Markdown (safe subset), line breaks kept. */
 export const Text = ({
 	children,
 	className,
@@ -93,14 +94,10 @@ export const Text = ({
 	children: string;
 	className?: string;
 }) => (
-	<p
-		className={cx(
-			"max-w-[68ch] whitespace-pre-wrap text-base leading-[1.75]",
-			className,
-		)}
-	>
-		{children}
-	</p>
+	<Markdown
+		md={children}
+		className={cx("max-w-[68ch] text-base leading-[1.75]", className)}
+	/>
 );
 
 /** Shortcut hint. Hidden on narrow screens and touch (no keyboard there). */
