@@ -75,17 +75,23 @@ export const reviewerOf = (issue: {
 	reporterId: string | null;
 }) => issue.approverId ?? issue.reporterId;
 
-/** Whose move is it? null when nobody's (done). */
+/**
+ * Whose move is it? null when nobody's (done).
+ * An unanswered question (openQuestions > 0) is always a human's turn: the reviewer's.
+ */
 export function whoseTurn(
 	issue: {
 		category: string;
 		reporterId: string | null;
 		assigneeId: string | null;
 		approverId: string | null;
+		openQuestions: number;
 	},
 	userId: string,
 ): "you" | "ai" | "others" | null {
 	const who = (id: string | null) => (id === userId ? "you" : "others");
+	if (issue.openQuestions && issue.category !== "done")
+		return who(reviewerOf(issue));
 	switch (issue.category) {
 		case "draft":
 			return who(issue.reporterId);

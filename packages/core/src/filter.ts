@@ -4,6 +4,7 @@ import {
 	issues,
 	issueTextMatch,
 	labels,
+	questions,
 	STATUS_CATEGORIES,
 	statuses,
 	users,
@@ -11,6 +12,7 @@ import {
 import { DATE_RE, PRIORITIES, PRIORITY_MAX } from "@tasuki/schema";
 import {
 	and,
+	count,
 	desc,
 	eq,
 	getTableColumns,
@@ -29,12 +31,12 @@ import { getProject } from "./projects";
 const OPS = [">=", "<=", ">", "<", "="] as const;
 type Op = (typeof OPS)[number];
 export type Cond =
-	| { key: "status" | "assignee" | "label"; value: string }
+	| { key: "status" | "assignee" | "label" | "question"; value: string }
 	| { key: "priority"; op: Op; value: number }
 	| { key: "due"; op: Op; value: string };
 export type FilterAst = { conds: Cond[]; terms: string[] };
 
-const KEYS = ["status", "assignee", "label", "priority", "due"];
+const KEYS = ["status", "assignee", "label", "question", "priority", "due"];
 
 const op = (v: string): [Op, string] => {
 	const [, o, rest = ""] = /^(>=|<=|>|<|=)?(.*)$/.exec(v) ?? [];
@@ -59,7 +61,14 @@ export function parseFilter(q: string): FilterAst {
 			continue;
 		}
 		if (!raw) fail("invalid", `empty value for '${key}'`);
-		if (key === "status" || key === "assignee" || key === "label") {
+		if (
+			key === "status" ||
+			key === "assignee" ||
+			key === "label" ||
+			key === "question"
+		) {
+			if (key === "question" && raw.toLowerCase() !== "open")
+				fail("invalid", `bad question filter '${raw}'`);
 			ast.conds.push({ key, value: raw });
 		} else if (key === "priority") {
 			const [o, v] = op(raw);
@@ -118,6 +127,14 @@ function condSql(ctx: Ctx, projectId: string, c: Cond): SQL {
 					),
 			);
 		}
+		case "question": // question:open = has an unanswered question
+			return inArray(
+				issues.id,
+				db
+					.select({ id: questions.issueId })
+					.from(questions)
+					.where(eq(questions.state, "open")),
+			);
 		case "label":
 			return inArray(
 				issues.id,
@@ -187,10 +204,29 @@ function listIssues(
 			.orderBy(labels.name)
 			.all())
 			byIssue.set(r.issueId, [...(byIssue.get(r.issueId) ?? []), r.name]);
+	// open question counts for the whole page in one query
+	const openQs = new Map<string, number>();
+	if (rows.length)
+		for (const r of ctx.db
+			.select({ issueId: questions.issueId, n: count() })
+			.from(questions)
+			.where(
+				and(
+					eq(questions.state, "open"),
+					inArray(
+						questions.issueId,
+						rows.map((i) => i.id),
+					),
+				),
+			)
+			.groupBy(questions.issueId)
+			.all())
+			openQs.set(r.issueId, r.n);
 	return rows.map((i) => ({
 		...i,
 		ref: refOf(project.key, i.number),
 		labels: byIssue.get(i.id) ?? [],
+		openQuestions: openQs.get(i.id) ?? 0,
 	}));
 }
 

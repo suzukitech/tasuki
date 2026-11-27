@@ -10,24 +10,46 @@
 	--indigo: #23407a;
 	--asagi: #2f7f86;
 	--sash: #c42d3a;
+	/* derived */
+	--line-strong: #cfd4ce;
+	--row-hover: color-mix(in srgb, var(--ink) 3%, var(--surface));
+	--selection: color-mix(in srgb, var(--indigo) 6%, var(--surface));
+	--focus: color-mix(in srgb, var(--indigo) 40%, transparent);
+	--sash-tint: color-mix(in srgb, var(--sash) 7%, var(--surface));
+	--indigo-light: color-mix(in srgb, var(--indigo) 65%, white);
+	--indigo-deep: color-mix(in srgb, var(--indigo) 80%, black);
+	--done: #2e7d5b;
+	--float:
+		0 1px 2px rgba(31, 41, 51, 0.06), 0 4px 8px rgba(31, 41, 51, 0.06),
+		0 12px 24px rgba(31, 41, 51, 0.1);
 }
 
 @theme {
 	--color-paper: var(--paper);
 	--color-surface: var(--surface);
 	--color-line: var(--line);
+	--color-line-strong: var(--line-strong);
 	--color-ink: var(--ink);
 	--color-nezumi: var(--nezumi);
 	--color-ai-indigo: var(--indigo);
 	--color-asagi: var(--asagi);
 	--color-sash: var(--sash);
-	--font-sans: "BIZ UDPGothic", system-ui, sans-serif;
+	--color-row-hover: var(--row-hover);
+	--color-selection: var(--selection);
+	--color-sash-tint: var(--sash-tint);
+	--color-done: var(--done);
+	--color-indigo-light: var(--indigo-light);
+	--color-indigo-deep: var(--indigo-deep);
+	--font-sans: "IBM Plex Sans JP", system-ui, sans-serif;
 	--text-xs: 12px;
 	--text-sm: 13px;
-	--text-base: 14px;
-	--text-lg: 16px;
+	--text-base: 15px;
+	--text-lg: 17px;
 	--text-xl: 20px;
-	--text-2xl: 24px;
+	--radius-control: 6px;
+	--radius-chip: 4px;
+	--radius-panel: 10px;
+	--shadow-float: var(--float);
 }
 
 html,
@@ -39,16 +61,34 @@ body {
 	background: var(--paper);
 	color: var(--ink);
 	font-family: var(--font-sans);
-	font-size: 14px;
+	font-size: 13px;
 	line-height: 1.6;
+	letter-spacing: 0.01em;
+	-webkit-font-smoothing: antialiased;
 }
 .num {
 	font-variant-numeric: tabular-nums;
 }
 
 :focus-visible {
-	outline: 2px solid var(--indigo);
+	outline: 2px solid var(--focus);
 	outline-offset: 1px;
+}
+/* inputs show the ring as a border + halo; the outline would double it */
+.bare:focus-visible {
+	outline: none;
+}
+input:not(.bare):focus-visible,
+textarea:focus-visible {
+	outline: none;
+	border-color: var(--indigo);
+	box-shadow: 0 0 0 3px var(--focus);
+}
+button {
+	cursor: pointer;
+}
+button:disabled {
+	cursor: default;
 }
 
 /* The one signature element: the sash stripe. Only "あなたの番" badges and human-gate column headers. */
@@ -68,18 +108,78 @@ body {
 	);
 }
 
-/* Side panel: motion only for open/close */
+/* list rows: hover tint, selected bar */
+.row:hover {
+	background: var(--row-hover);
+}
+.row[aria-selected="true"],
+.row[data-open="true"] {
+	background: var(--selection);
+}
+.row[aria-selected="true"] > td:first-child {
+	box-shadow: inset 2px 0 0 var(--indigo);
+}
+
+kbd {
+	font: inherit;
+	font-size: 11px;
+	line-height: 1;
+	padding: 3px 5px;
+	border: 1px solid var(--line-strong);
+	border-bottom-width: 2px;
+	border-radius: 4px;
+	background: var(--surface);
+	color: var(--nezumi);
+}
+
+/* Motion: panel open/close, popovers, toasts. Nothing else. */
 @keyframes panel-in {
 	from {
 		transform: translateX(24px);
 		opacity: 0;
 	}
 }
+@keyframes pop-in {
+	from {
+		transform: scale(0.98);
+		opacity: 0;
+	}
+}
+@keyframes toast-in {
+	from {
+		transform: translateY(8px);
+		opacity: 0;
+	}
+}
+@keyframes shimmer {
+	to {
+		background-position: -200% 0;
+	}
+}
 .panel {
 	animation: panel-in 160ms ease-out;
 }
+.pop {
+	animation: pop-in 100ms ease-out;
+}
+.toast {
+	animation: toast-in 160ms ease-out;
+}
+.skeleton {
+	background: linear-gradient(
+		90deg,
+		var(--line) 25%,
+		var(--paper) 50%,
+		var(--line) 75%
+	);
+	background-size: 200% 100%;
+	animation: shimmer 1.4s linear infinite;
+}
 @media (prefers-reduced-motion: reduce) {
-	.panel {
+	.panel,
+	.pop,
+	.toast,
+	.skeleton {
 		animation: none;
 	}
 }

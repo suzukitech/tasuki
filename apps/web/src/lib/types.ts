@@ -33,8 +33,8 @@ export type IssueCore = {
 	flow: "ai" | "simple";
 	updatedAt: string;
 };
-/** A list row also carries its label names. */
-export type IssueRow = IssueCore & { labels: string[] };
+/** A list row also carries its label names and its unanswered-question count. */
+export type IssueRow = IssueCore & { labels: string[]; openQuestions: number };
 export type Issue = IssueCore & {
 	bodyMd: string;
 	skipPlanReview: boolean;
@@ -69,8 +69,12 @@ export type Question = {
 	askedBy: string | null;
 	bodyMd: string;
 	answerMd: string | null;
+	answeredBy: string | null;
+	via: string | null;
 	state: "open" | "answered";
 	createdAt: string;
+	/** null while open, and on answers from before the column existed */
+	answeredAt: string | null;
 };
 export type Comment = {
 	id: string;
@@ -105,6 +109,7 @@ export type IssueDetail = {
 	}[];
 	reports: Report[];
 	questions: Question[];
+	openQuestions: number;
 	comments: Comment[];
 	activities: Activity[];
 };

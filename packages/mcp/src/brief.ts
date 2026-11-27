@@ -74,7 +74,9 @@ export function briefMd(d: ReturnType<typeof loadBrief>): string {
 		})),
 		...d.questions.flatMap((q) => [
 			{ at: q.createdAt, t: `[質問 ${q.id}] ${q.bodyMd}` },
-			...(q.answerMd ? [{ at: q.createdAt, t: `[回答] ${q.answerMd}` }] : []),
+			...(q.answerMd
+				? [{ at: q.answeredAt ?? q.createdAt, t: `[回答] ${q.answerMd}` }]
+				: []),
 		]),
 	]
 		.sort((a, b) => a.at.getTime() - b.at.getTime())

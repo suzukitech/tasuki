@@ -9,6 +9,7 @@ import {
 	getIssue,
 	moveIssue,
 	rejectPlan,
+	searchIssues,
 	submitPlan,
 	type TasukiError,
 } from "../src/index";
@@ -120,6 +121,37 @@ test("getAnswers: answers to own questions and plan rejection", () => {
 	expect(a.questions[0]).toMatchObject({ state: "answered", answer: "sqlite" });
 	expect(a.planRejection).toEqual({ version: 1, note: "too vague" });
 	expect(a.reportReturn).toBeNull();
+});
+
+test("askQuestion records via; list rows and getIssue count open questions", () => {
+	const w = world();
+	const ref = w.mk({ title: "a" });
+	const other = w.mk({ title: "b" });
+	const tok = w.ctx(w.u.mem, "token");
+	const q = askQuestion(tok, ref, "which db?");
+	expect(q.via).toBe("mcp:test");
+	askQuestion(tok, ref, "and cache?");
+	const count = (r: string) =>
+		searchIssues(tok, "WEB", "").find((i) => i.ref === r)?.openQuestions;
+	expect(count(ref)).toBe(2);
+	expect(count(other)).toBe(0);
+	expect(getIssue(tok, ref).openQuestions).toBe(2);
+	expect(searchIssues(tok, "WEB", "question:open").map((i) => i.ref)).toEqual([
+		ref,
+	]);
+	answerQuestion(w.ctx(w.u.mem), q.id, "sqlite");
+	expect(getIssue(tok, ref).openQuestions).toBe(1);
+});
+
+test("answerQuestion stamps answeredAt (the answer's own time)", () => {
+	const w = world();
+	const ref = w.mk({ title: "a" });
+	const q = askQuestion(w.ctx(w.u.mem, "token"), ref, "which db?");
+	w.clock.t = new Date("2026-01-02T00:00:00Z");
+	answerQuestion(w.ctx(w.u.mem), q.id, "sqlite");
+	const got = getIssue(w.ctx(w.u.mem), ref).questions[0];
+	expect(got?.answeredAt).toEqual(new Date("2026-01-02T00:00:00Z"));
+	expect(got?.createdAt).toEqual(new Date("2026-01-01T00:00:00Z"));
 });
 
 test("extendLockIfHeld respects token projectIds and membership", () => {

@@ -4,9 +4,19 @@ import { ApiError, api } from "../src/lib/api";
 import { mapPages, projectOf } from "../src/lib/cache";
 import { criteriaBody, critsOf, shown } from "../src/lib/draft";
 import { etagOf, writeError } from "../src/lib/etag";
+import {
+	activityText,
+	hueOf,
+	initialOf,
+	relativeDue,
+	relativeTime,
+	splitSteps,
+	stepRefs,
+	viaLabel,
+} from "../src/lib/format";
 import { keyAction, shouldHandleKey } from "../src/lib/keys";
 import { PRIORITY_KEYS } from "../src/lib/priority";
-import { buildCreate } from "../src/lib/quick";
+import { buildCreate, previewQuick } from "../src/lib/quick";
 import { turnOf } from "../src/lib/turn";
 import type { IssueRow, Page, Status } from "../src/lib/types";
 
@@ -44,6 +54,21 @@ describe("keyboard guard", () => {
 		).toBeNull();
 		expect(keyAction({ key: "j", target: { tagName: "BUTTON" } })).toBe("next");
 	});
+	test("keys inside an open menu never reach the page shortcuts", () => {
+		const inMenu = {
+			tagName: "DIV",
+			closest: (sel: string) => (sel.includes("[role=listbox]") ? {} : null),
+		};
+		expect(keyAction({ key: "Enter", target: inMenu })).toBeNull();
+		expect(keyAction({ key: "j", target: inMenu })).toBeNull();
+		expect(shouldHandleKey({ key: "c", target: inMenu })).toBe(false);
+		expect(
+			shouldHandleKey({
+				key: "c",
+				target: { tagName: "DIV", closest: () => null },
+			}),
+		).toBe(true);
+	});
 	test("null target is fine", () => {
 		expect(keyAction({ key: "c", target: null })).toBe("create");
 	});
@@ -69,7 +94,13 @@ describe("turn badge", () => {
 		flow: "ai",
 		updatedAt: "2026-01-01T00:00:00.000Z",
 		labels: [],
+		openQuestions: 0,
 		...o,
+	});
+	test("open question: reviewer's turn, never AI", () => {
+		const q = { assigneeId: "x", openQuestions: 1 };
+		expect(turnOf(row("s2", q), statuses, "a")).toBe("you");
+		expect(turnOf(row("s2", q), statuses, "x")).toBe("others");
 	});
 	test("approver, AI, others, done, unknown", () => {
 		expect(turnOf(row("s1"), statuses, "a")).toBe("you");
@@ -234,4 +265,108 @@ test("priority options derive from PRIORITIES, in value order", () => {
 		"priority.urgent",
 	]);
 	for (const k of PRIORITY_KEYS) expect(t(k)).not.toBe(k);
+});
+
+describe("display helpers", () => {
+	const now = new Date(2026, 10, 27, 15);
+	test("relative due dates", () => {
+		expect(relativeDue("2026-11-27", now)).toEqual({
+			text: "今日",
+			late: false,
+		});
+		expect(relativeDue("2026-11-28", now).text).toBe("明日");
+		expect(relativeDue("2026-11-30", now).text).toBe("3日後");
+		expect(relativeDue("2026-11-25", now)).toEqual({
+			text: "2日超過",
+			late: true,
+		});
+		expect(relativeDue("2026-12-31", now).text).toBe("12月31日");
+	});
+	test("relative time", () => {
+		expect(relativeTime(now, now)).toBe("たった今");
+		expect(relativeTime(new Date(now.getTime() - 5 * 60_000), now)).toBe(
+			"5分前",
+		);
+		expect(relativeTime(new Date(now.getTime() - 3 * 3600_000), now)).toBe(
+			"3時間前",
+		);
+		expect(relativeTime(new Date(now.getTime() - 2 * 86400_000), now)).toBe(
+			"2日前",
+		);
+	});
+	test("avatar helpers are stable", () => {
+		expect(hueOf("abc")).toBe(hueOf("abc"));
+		expect(hueOf("abc")).toBeLessThan(360);
+		expect(initialOf("鈴木 康")).toBe("鈴");
+		expect(initialOf("ada")).toBe("A");
+	});
+	test("steps and step chips", () => {
+		expect(splitSteps("1. a\n2) b")).toEqual([
+			{ n: "1", text: "a" },
+			{ n: "2", text: "b" },
+		]);
+		expect(splitSteps("just text")).toBeNull();
+		expect(stepRefs("1, 2、4")).toEqual(["1", "2", "4"]);
+		expect(stepRefs(null)).toEqual([]);
+	});
+	test("quick-create preview matches what Enter sets", () => {
+		const members = [{ id: "u1", name: "Taro", role: "member" as const }];
+		const p = previewQuick("x @tar #a !urgent", members);
+		expect(p.assignee?.id).toBe("u1");
+		expect(p.labels).toEqual(["a"]);
+		expect(p.priority).toBe(4);
+		expect(previewQuick("x @nobody", members).assignee).toBeUndefined();
+	});
+});
+
+describe("history text", () => {
+	const ctx = {
+		members: [
+			{ id: "u1", name: "Taro", role: "member" as const },
+			{ id: "u2", name: "Hanako", role: "member" as const },
+		],
+		statuses: [
+			{
+				id: "s1",
+				name: "作業中",
+				category: "in_progress" as const,
+				position: 0,
+			},
+		],
+	};
+	const a = (field: string, before: string | null, after: string | null) =>
+		activityText({ action: "updated", field, before, after }, ctx);
+	test("ids become names / labels", () => {
+		expect(a("assigneeId", "u1", "u2")).toBe(
+			"担当を「Taro」から「Hanako」に変更",
+		);
+		expect(a("assigneeId", null, "u2")).toBe("担当を「Hanako」に設定");
+		expect(a("assigneeId", "u1", null)).toBe(
+			"担当を「Taro」から「未割り当て」に変更",
+		);
+		expect(a("approverId", "zzz", "u1")).toBe(
+			"承認者を「不明なユーザー」から「Taro」に変更",
+		);
+		expect(a("statusId", null, "s1")).toBe("状態を「作業中」に設定");
+		expect(a("priority", "1", "4")).toBe("優先度を「低」から「緊急」に変更");
+		expect(a("flow", "simple", "ai")).toBe(
+			"進め方を「人がやる」から「AIに任せる」に変更",
+		);
+		expect(a("title", "a", "b")).toBe("タイトルを「a」から「b」に変更");
+	});
+	test("plain actions and long values", () => {
+		expect(
+			activityText(
+				{ action: "completed", field: null, before: null, after: null },
+				ctx,
+			),
+		).toBe("完了にした");
+		expect(a("bodyMd", "x", "y".repeat(50))).toBe("本文を更新");
+	});
+	test("via label", () => {
+		expect(viaLabel("mcp:claude-code")).toBe("Claude Code経由");
+		expect(viaLabel("mcp:cursor")).toBe("cursor経由");
+		expect(viaLabel("cli")).toBe("CLI経由");
+		expect(viaLabel("weird")).toBe("weird");
+	});
 });

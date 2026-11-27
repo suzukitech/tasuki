@@ -187,7 +187,12 @@ describe("comments / getIssue / misc", () => {
 		).toBeDefined();
 	});
 	test("whoseTurn", () => {
-		const base = { reporterId: "r", assigneeId: null, approverId: "a" };
+		const base = {
+			reporterId: "r",
+			assigneeId: null,
+			approverId: "a",
+			openQuestions: 0,
+		};
 		expect(whoseTurn({ ...base, category: "draft" }, "r")).toBe("you");
 		expect(whoseTurn({ ...base, category: "draft" }, "z")).toBe("others");
 		expect(whoseTurn({ ...base, category: "ready" }, "z")).toBe("others");
@@ -202,6 +207,24 @@ describe("comments / getIssue / misc", () => {
 			whoseTurn({ ...base, approverId: null, category: "impl_review" }, "r"),
 		).toBe("you");
 		expect(whoseTurn({ ...base, category: "done" }, "a")).toBeNull();
+	});
+	test("whoseTurn: an open question is the reviewer's turn, never the AI's", () => {
+		const q = {
+			reporterId: "r",
+			assigneeId: "x",
+			approverId: "a",
+			openQuestions: 1,
+		};
+		expect(whoseTurn({ ...q, category: "in_progress" }, "a")).toBe("you");
+		expect(whoseTurn({ ...q, category: "in_progress" }, "x")).toBe("others");
+		expect(whoseTurn({ ...q, category: "ready" }, "r")).toBe("others");
+		expect(whoseTurn({ ...q, approverId: null, category: "ready" }, "r")).toBe(
+			"you",
+		);
+		expect(
+			whoseTurn({ ...q, openQuestions: 0, category: "in_progress" }, "x"),
+		).toBe("ai");
+		expect(whoseTurn({ ...q, category: "done" }, "a")).toBeNull();
 	});
 });
 

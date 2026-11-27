@@ -11,11 +11,14 @@ export const TURN_KEY: Record<Turn, Key> = {
 
 /** Badge for a list row. null when nobody's turn (done) or the status is unknown. */
 export function turnOf(
-	issue: IssueCore,
+	issue: IssueCore & { openQuestions?: number },
 	statuses: Status[],
 	userId: string,
 ): Turn | null {
 	const category = statuses.find((s) => s.id === issue.statusId)?.category;
 	if (!category) return null;
-	return whoseTurn({ ...issue, category }, userId);
+	return whoseTurn(
+		{ ...issue, openQuestions: issue.openQuestions ?? 0, category },
+		userId,
+	);
 }

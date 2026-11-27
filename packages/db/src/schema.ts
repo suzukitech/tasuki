@@ -346,6 +346,10 @@ export const questions = sqliteTable(
 		bodyMd: text("body_md").notNull(),
 		answerMd: text("answer_md"),
 		answeredBy: text("answered_by").references(() => users.id),
+		// when it was answered; null while open and on rows answered before this column
+		answeredAt: ts("answered_at"),
+		// how it was asked (web / mcp:<client>); null on rows from before this column
+		via: text("via"),
 		state: text("state", { enum: ["open", "answered"] })
 			.notNull()
 			.default("open"),

@@ -4,7 +4,11 @@ export type KeyLike = {
 	metaKey?: boolean;
 	ctrlKey?: boolean;
 	altKey?: boolean;
-	target: { tagName?: string; isContentEditable?: boolean } | null;
+	target: {
+		tagName?: string;
+		isContentEditable?: boolean;
+		closest?: (selector: string) => unknown;
+	} | null;
 };
 export type KeyAction =
 	| "create"
@@ -21,6 +25,8 @@ export function shouldHandleKey(e: KeyLike): boolean {
 	if (e.isComposing || e.metaKey || e.ctrlKey || e.altKey) return false;
 	const t = e.target;
 	if (t?.isContentEditable) return false;
+	// keys inside an open Menu belong to the menu
+	if (t?.closest?.("[role=listbox],[role=menu]")) return false;
 	return !(t?.tagName && TYPING.has(t.tagName.toUpperCase()));
 }
 

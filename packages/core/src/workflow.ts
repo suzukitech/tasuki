@@ -488,6 +488,7 @@ export function askQuestion(ctx: Ctx, ref: string, bodyMd: string) {
 			.values({
 				issueId: l.issue.id,
 				askedBy: c.actor.userId,
+				via: c.actor.via,
 				bodyMd: body,
 				createdAt: nowOf(c),
 			})
@@ -514,7 +515,12 @@ export function answerQuestion(ctx: Ctx, questionId: string, answerMd: string) {
 		if (q.state !== "open") fail("conflict", "already answered");
 		const done = c.db
 			.update(questions)
-			.set({ answerMd: answer, answeredBy: c.actor.userId, state: "answered" })
+			.set({
+				answerMd: answer,
+				answeredBy: c.actor.userId,
+				answeredAt: nowOf(c),
+				state: "answered",
+			})
 			.where(eq(questions.id, q.id))
 			.returning()
 			.get();
