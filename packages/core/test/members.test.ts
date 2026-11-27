@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
 	addMember,
 	changeMemberRole,
+	type IssueEvent,
 	projectDetail,
 	removeMember,
 	renameStatus,
@@ -80,6 +81,23 @@ describe("members", () => {
 				changeMemberRole(ctx(u.mem), "WEB", u.mem.id, { role: "bogus" }),
 			),
 		).toBe("invalid:400");
+	});
+});
+
+describe("renameStatus events", () => {
+	test("emits project.updated for the project, after commit", () => {
+		const { ctx, u } = setup();
+		const events: IssueEvent[] = [];
+		const c = { ...ctx(u.mgr), emit: (e: IssueEvent) => events.push(e) };
+		const st = projectDetail(c, "WEB").statuses[0];
+		if (!st) throw new Error("no status");
+		renameStatus(c, "WEB", st.id, { name: "Inbox" });
+		expect(events).toHaveLength(1);
+		expect(events[0]).toMatchObject({ type: "project.updated", ref: "WEB" });
+		expect(code(() => renameStatus(c, "WEB", "nope", { name: "x" }))).toBe(
+			"not_found:404",
+		);
+		expect(events).toHaveLength(1);
 	});
 });
 

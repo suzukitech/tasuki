@@ -28,6 +28,7 @@ export const EVENT_TYPES = [
 	"report.returned",
 	"question.asked",
 	"question.answered",
+	"project.updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 

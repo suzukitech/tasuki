@@ -15,7 +15,7 @@ import {
 	updateProjectInput,
 } from "@tasuki/schema";
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { atomic, type Ctx, fail, parse } from "./ctx";
+import { atomic, type Ctx, fail, parse, record } from "./ctx";
 import {
 	type Role,
 	requireProjectRole,
@@ -71,9 +71,13 @@ export function setMember(
 	role: Role,
 ) {
 	const project = getProject(ctx, projectKey, "manager");
+	upsertMember(ctx, project.id, userId, role);
+}
+
+function upsertMember(ctx: Ctx, projectId: string, userId: string, role: Role) {
 	ctx.db
 		.insert(projectMembers)
-		.values({ projectId: project.id, userId, role })
+		.values({ projectId, userId, role })
 		.onConflictDoUpdate({
 			target: [projectMembers.projectId, projectMembers.userId],
 			set: { role },
@@ -117,16 +121,24 @@ export function addMember(ctx: Ctx, key: string, input: unknown) {
 		.get();
 	if (!user) return fail("not_found", "no user with that email");
 	return atomic(ctx, (c) => {
-		const cur = memberOf(c, project.id, user.id);
-		if (cur?.role === "manager" && inp.role !== "manager")
-			guardLastManager(c, project.id);
-		setMember(c, key, user.id, inp.role);
+		guardLastManager(c, project.id, user.id, inp.role);
+		upsertMember(c, project.id, user.id, inp.role);
 		return { userId: user.id, role: inp.role };
 	});
 }
 
-function guardLastManager(ctx: Ctx, projectId: string) {
-	if (managerCount(ctx, projectId) <= 1)
+/** Refuse a change that would leave the project without a manager (`to` null = removal). */
+function guardLastManager(
+	ctx: Ctx,
+	projectId: string,
+	userId: string,
+	to: Role | null,
+) {
+	if (
+		memberOf(ctx, projectId, userId)?.role === "manager" &&
+		to !== "manager" &&
+		managerCount(ctx, projectId) <= 1
+	)
 		fail("conflict", "a project needs at least one manager");
 }
 
@@ -143,8 +155,7 @@ export function changeMemberRole(
 	return atomic(ctx, (c) => {
 		const cur = memberOf(c, project.id, userId);
 		if (!cur) return fail("not_found", "not a member of this project");
-		if (cur.role === "manager" && role !== "manager")
-			guardLastManager(c, project.id);
+		guardLastManager(c, project.id, userId, role);
 		c.db
 			.update(projectMembers)
 			.set({ role })
@@ -161,7 +172,7 @@ export function removeMember(ctx: Ctx, key: string, userId: string) {
 	atomic(ctx, (c) => {
 		const cur = memberOf(c, project.id, userId);
 		if (!cur) return fail("not_found", "not a member of this project");
-		if (cur.role === "manager") guardLastManager(c, project.id);
+		guardLastManager(c, project.id, userId, null);
 		c.db.delete(projectMembers).where(memberWhere(project.id, userId)).run();
 	});
 }
@@ -176,14 +187,19 @@ export function renameStatus(
 	requireSession(ctx, "renaming a status");
 	const { name } = parse(statusRenameInput, input);
 	const project = getProject(ctx, key, "manager");
-	return (
-		ctx.db
-			.update(statuses)
-			.set({ name })
-			.where(and(eq(statuses.id, statusId), eq(statuses.projectId, project.id)))
-			.returning()
-			.get() ?? fail("not_found", "status not found")
-	);
+	return atomic(ctx, (c) => {
+		const row =
+			c.db
+				.update(statuses)
+				.set({ name })
+				.where(
+					and(eq(statuses.id, statusId), eq(statuses.projectId, project.id)),
+				)
+				.returning()
+				.get() ?? fail("not_found", "status not found");
+		record(c, "project.updated", project.id, project.key);
+		return row;
+	});
 }
 
 /** Projects the actor can read (token project restriction applies). One query. */
