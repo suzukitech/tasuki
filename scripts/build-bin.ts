@@ -9,29 +9,16 @@ import {
 	writeFileSync,
 } from "node:fs";
 import { join, relative, resolve } from "node:path";
+import { $ } from "bun";
+import { binName, TARGETS } from "./platforms";
 
 const root = resolve(import.meta.dir, "..");
-const ALL = [
-	"linux-x64",
-	"linux-arm64",
-	"darwin-x64",
-	"darwin-arm64",
-	"windows-x64",
-];
-const targets = Bun.argv.slice(2).length ? Bun.argv.slice(2) : ALL;
+const targets = Bun.argv.slice(2).length ? Bun.argv.slice(2) : TARGETS;
 for (const t of targets)
-	if (!ALL.includes(t))
-		throw new Error(`unknown target ${t} (${ALL.join(", ")})`);
+	if (!(TARGETS as string[]).includes(t))
+		throw new Error(`unknown target ${t} (${TARGETS.join(", ")})`);
 
-const sh = (cmd: string[], cwd = root) => {
-	const r = Bun.spawnSync(cmd, {
-		cwd,
-		stdio: ["inherit", "inherit", "inherit"],
-	});
-	if (r.exitCode !== 0) throw new Error(`failed: ${cmd.join(" ")}`);
-};
-
-sh(["bun", "run", "build"]);
+await $`bun run build`.cwd(root);
 
 const walk = (dir: string): string[] =>
 	readdirSync(dir).flatMap((n) => {
@@ -54,7 +41,6 @@ const journal = (await Bun.file(
 };
 
 const lines = [
-	`import { embeddedMigrations } from "${rel(join(root, "packages/db/src/index"))}";`,
 	`import { run } from "${rel(join(root, "packages/cli/src/main"))}";`,
 	`import journal from "${rel(join(drizzle, "meta/_journal.json"))}" with { type: "json" };`,
 	...journal.entries.map(
@@ -68,11 +54,11 @@ const lines = [
 			`\t${JSON.stringify(`/${relative(webDir, f).replaceAll("\\", "/")}`)}: w${i},`,
 	),
 	"};",
-	"const migrations = embeddedMigrations(journal, {",
+	"const migrations = { journal, sql: {",
 	...journal.entries.map((e, i) => `\t${JSON.stringify(e.tag)}: m${i},`),
-	"});",
+	"} };",
 	"const code = await run(Bun.argv.slice(2), { webAssets, migrations });",
-	"if (code !== undefined) process.exit(code);",
+	'if (typeof code === "number") process.exit(code);',
 	"",
 ];
 const entry = join(entryDir, "entry.ts");
@@ -81,14 +67,9 @@ writeFileSync(entry, lines.join("\n"));
 const out = join(root, "dist/bin");
 mkdirSync(out, { recursive: true });
 for (const t of targets) {
-	const file = join(out, `tasuki-${t}${t.startsWith("windows") ? ".exe" : ""}`);
-	sh([
-		"bun",
-		"build",
-		entry,
-		"--compile",
-		`--target=bun-${t}`,
-		`--outfile=${file}`,
-	]);
+	const file = join(out, binName(t));
+	await $`bun build ${entry} --compile --target=bun-${t} --outfile=${file}`.cwd(
+		root,
+	);
 	console.log(`${file} ${(statSync(file).size / 1e6).toFixed(1)} MB`);
 }

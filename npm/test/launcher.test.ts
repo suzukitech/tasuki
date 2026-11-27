@@ -83,6 +83,28 @@ describe("npm launcher", () => {
 			expect(seen[1]).toEqual(["serve", "--port", "1"]);
 			expect(seen[2]).toEqual({ stdio: "inherit" });
 		});
+		test("musl (Alpine) gets a clear message and never spawns", () => {
+			const err = console.error;
+			const lines: string[] = [];
+			console.error = (m: string) => void lines.push(m);
+			try {
+				const code = main({
+					...base,
+					musl: () => true,
+					spawn: () => {
+						throw new Error("must not spawn");
+					},
+				});
+				expect(code).toBe(1);
+			} finally {
+				console.error = err;
+			}
+			expect(lines.join()).toContain("musl");
+			// glibc linux and non-linux are not affected
+			expect(
+				main({ ...base, musl: () => false, spawn: () => ({ status: 0 }) }),
+			).toBe(0);
+		});
 		test("signal death is re-raised, spawn errors and missing package exit 1", () => {
 			const sigs: string[] = [];
 			expect(

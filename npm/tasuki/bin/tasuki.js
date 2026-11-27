@@ -3,7 +3,6 @@
 // Thin launcher: finds the platform package holding the real (Bun-compiled) binary and runs it.
 // Plain CommonJS, no dependencies: `npx` runs this under whatever Node the user has.
 const { spawnSync } = require("node:child_process");
-const { chmodSync, accessSync, constants } = require("node:fs");
 const { dirname, join } = require("node:path");
 
 const PLATFORMS = [
@@ -53,20 +52,22 @@ function main(env) {
 		argv: process.argv.slice(2),
 		spawn: spawnSync,
 		kill: process.kill.bind(process, process.pid),
+		// Linux without glibc is musl (Alpine): the binary is dynamically linked against glibc
+		musl: () =>
+			process.platform === "linux" &&
+			!process.report?.getReport?.().header?.glibcVersionRuntime,
 		...env,
 	};
+	if (e.platform === "linux" && e.musl()) {
+		console.error(
+			"tasuki: Alpine/musl は未対応です。Docker か glibc の環境で実行してください。",
+		);
+		return 1;
+	}
 	const r = findBinary(e.platform, e.arch, e.resolve);
 	if (r.error) {
 		console.error(r.error);
 		return 1;
-	}
-	try {
-		// some installers drop the executable bit
-		accessSync(r.path, constants.X_OK);
-	} catch {
-		try {
-			chmodSync(r.path, 0o755);
-		} catch {}
 	}
 	const res = e.spawn(r.path, e.argv, { stdio: "inherit" });
 	if (res.error) {
