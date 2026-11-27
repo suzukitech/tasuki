@@ -3,12 +3,15 @@ on:
   push:
     branches: [main]
   pull_request:
+permissions:
+  contents: read
+
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.5
       - run: bun install --frozen-lockfile
@@ -16,15 +19,40 @@ jobs:
   e2e:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           bun-version: 1.4.5
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
       - run: bun run e2e
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: failure()
         with:
           name: playwright-traces
           path: test-results/
+  docker:
+    # Build the release image (no push) and smoke-test it as a container.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca # v3.9.0
+      - uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: .
+          load: true
+          push: false
+          tags: tasuki:ci
+      - name: Smoke test
+        run: |
+          docker image ls tasuki:ci
+          docker run -d --name tasuki -p 3000:3000 -v tasuki-ci:/data tasuki:ci
+          for i in $(seq 1 30); do curl -fs localhost:3000/health && break; sleep 1; done
+          curl -fsS localhost:3000/health
+          curl -fsS localhost:3000/ | grep -q '<title>Tasuki'
+          docker exec tasuki tasuki healthcheck
+          test "$(docker exec tasuki id -u)" != 0
+          docker exec tasuki tasuki --version
+      - name: Container logs
+        if: failure()
+        run: docker logs tasuki

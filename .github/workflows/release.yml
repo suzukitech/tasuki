@@ -1,0 +1,145 @@
+name: Release
+# Runs only for version tags (git tag vX.Y.Z && git push --tags). Nothing else publishes.
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.5
+      - name: Tag matches package.json version
+        run: test "v$(bun -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+      - run: bun install --frozen-lockfile
+      - run: bun run check
+
+  build:
+    needs: check
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.5
+      - run: bun install --frozen-lockfile
+      - run: bun run build:bin
+      - name: Smoke test the linux-x64 binary
+        run: |
+          set -eu
+          B="$PWD/dist/bin/tasuki-linux-x64"
+          "$B" --version
+          D="$(mktemp -d)"
+          "$B" serve --data "$D" --port 4399 &
+          PID=$!
+          trap 'kill $PID' EXIT
+          for i in $(seq 1 30); do "$B" healthcheck --port 4399 && break; sleep 1; done
+          "$B" healthcheck --port 4399
+          curl -fsS localhost:4399/ | grep -q '<title>Tasuki'
+      - name: Archives (tar keeps the executable bit; artifact upload does not)
+        run: |
+          mkdir -p dist/release
+          for f in dist/bin/tasuki-*; do tar -czf "dist/release/$(basename "$f").tar.gz" -C dist/bin "$(basename "$f")"; done
+      - run: bun scripts/gen-npm.ts
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release
+          path: dist/release/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: npm
+          path: dist/npm/
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: release
+          path: release
+      - name: Checksums
+        run: cd release && sha256sum tasuki-*.tar.gz > SHA256SUMS && cat SHA256SUMS
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: release/*
+          generate_release_notes: true
+
+  docker:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+      - uses: docker/setup-buildx-action@f7ce87c1d6bead3e36075b2ce75da1f6cc28aaca # v3.9.0
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Tags
+        id: tags
+        run: |
+          V="${GITHUB_REF_NAME#v}"
+          T="ghcr.io/suzukitech/tasuki:$V"
+          # pre-releases (0.2.0-rc.1) do not move :latest
+          case "$V" in *-*) ;; *) T="$T,ghcr.io/suzukitech/tasuki:latest" ;; esac
+          echo "tags=$T" >> "$GITHUB_OUTPUT"
+      - uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75 # v6.9.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.tags.outputs.tags }}
+          labels: org.opencontainers.image.source=https://github.com/suzukitech/tasuki
+
+  npm:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: npm
+          path: npm
+      - name: Publish platform packages, then the launcher
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -eu
+          DIST_TAG=latest
+          case "$GITHUB_REF_NAME" in *-*) DIST_TAG=next ;; esac
+          publish() { # re-runnable: skip a package whose exact version is already on npm
+            name="$(node -p 'require("./package.json").name')"
+            version="$(node -p 'require("./package.json").version')"
+            if npm view "$name@$version" version >/dev/null 2>&1; then
+              echo "skip $name@$version (already published)"
+            else
+              npm publish --provenance --access public --tag "$DIST_TAG"
+            fi
+          }
+          for d in npm/tasuki-*; do
+            # the artifact download drops the executable bit: this is the only chmod
+            (cd "$d" && chmod +x bin/* && publish)
+          done
+          (cd npm/tasuki && publish)

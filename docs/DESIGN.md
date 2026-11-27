@@ -296,7 +296,7 @@ status:open assignee:me label:bug priority:>=high due:<2026-12-31 "ログイン"
 
 ## MCPサーバー設計
 
-MCPはサーバーに内蔵し、**Streamable HTTP（`https://<host>/mcp`）+ パーソナルアクセストークン**で接続します。HTTP非対応のクライアント向けに、`npx tasuki mcp` がstdio→HTTPの中継をします。
+MCPはサーバーに内蔵し、**Streamable HTTP（`https://<host>/mcp`）+ パーソナルアクセストークン**で接続します。HTTP非対応のクライアント向けに、`npx @suzukitech/tasuki mcp`（`tasuki mcp`）がstdio→HTTPの中継をします。
 
 Claude Codeへの追加は次の1行で済むようにします。
 
@@ -461,22 +461,22 @@ AIは専用のユーザーを持たず、**トークンを発行した人の権�
 **チームで使う（Docker）**
 
 ```
-docker run -d -p 3000:3000 -v tasuki-data:/data ghcr.io/<org>/tasuki:latest
+docker run -d -p 3000:3000 -v tasuki-data:/data ghcr.io/suzukitech/tasuki:latest
 ```
 
 **試す・個人で使う（npx）**
 
 ```
-npx @<ユーザー名>/tasuki serve --data ./tasuki-data
+npx @suzukitech/tasuki serve --data ./tasuki-data
 ```
 
-GitHub ReleasesからOSごとの実行ファイルをダウンロードして、`./tasuki serve` で動かすこともできます。npmパッケージは、OSごとの実行ファイルを中に入れた薄い入れ物にします（esbuildやCodex CLIと同じ方式）。こうすると、`npx` でもNode.jsのバージョンに左右されずに動きます。
+GitHub ReleasesからOSごとの `tasuki-<os>-<arch>.tar.gz`（実行ビットを保つためtar。`SHA256SUMS` はアーカイブに対するもの）をダウンロードして、展開して `./tasuki-<os>-<arch> serve` で動かすこともできます。npmパッケージは、OSごとの実行ファイルを中に入れた薄い入れ物にします（esbuildやCodex CLIと同じ方式）。こうすると、`npx` でもNode.jsのバージョンに左右されずに動きます。
 
 - `/data` に SQLiteファイルと添付ファイルを置く。バックアップは `tasuki backup` でオンラインのスナップショットを取る。
-- 設定は環境変数だけ（`TASUKI_BASE_URL`、`TASUKI_SECRET`、`TASUKI_TRUST_PROXY` など）。`TASUKI_TRUST_PROXY=1` はリバースプロキシの背後で `X-Forwarded-For` をレート制限のIPに使う（既定は使わない）。未指定なら初回起動時に生成して `/data` に保存。
+- 設定は環境変数だけ（`TASUKI_BASE_URL`、`TASUKI_SECRET`、`TASUKI_TRUST_PROXY` など）。`TASUKI_TRUST_PROXY=1` はリバースプロキシの背後で `X-Forwarded-For` をレート制限のIPに使う（既定は使わない）。`TASUKI_SECRET` は現状どこにも使っておらず、生成も保存もしない（必要になった機能が入った時点で、未指定なら初回起動時に生成して `/data` に保存する）。
 - マイグレーションは起動時に自動実行。実行前に自動バックアップを取る。
 - HTTPSは利用者側のリバースプロキシ（Caddyなど）に任せ、READMEに例を載せる。
-- 配布物: npmパッケージ `tasuki`、GitHub Container Registryのイメージ（amd64 / arm64）。GitHub Actionsでタグを打つと両方を公開。
+- 配布物: npmパッケージ `@suzukitech/tasuki`、GitHub Container Registryのイメージ `ghcr.io/suzukitech/tasuki`（amd64 / arm64）。GitHub Actionsでタグを打つと両方を公開。
 
 **お金をかけない配布**: 公開リポジトリであれば、開発から配布まですべて無料で完結します。独自ドメインも要りません。
 
@@ -671,3 +671,22 @@ MVPを「Redmineより使いやすい」と「AIネイティブな開発がで�
 
 - `issue_templates`（名前、種別、本文の型、条件の型）をプロジェクト管理者がCRUDする（`GET/POST /projects/:key/templates`、`PATCH/DELETE /projects/:key/templates/:id`。管理者のみ、セッションのみ。一覧はメンバーも読める）。種別は任意。
 - 新規作成の入力欄から、テンプレートを選ぶと本文を埋める（クイック作成は1行入力なのでテンプレートの選択肢は出さない）。受け入れ条件の型（`criteria_template`）は今回は使わない。強制はしない。
+
+## Phase 7: 配布の実装メモ
+
+**CLI（`packages/cli`、コマンド名 `tasuki`）**: `serve` / `backup` / `export` / `mcp` / `agent-setup` / `healthcheck` / `--help` / `--version`。引数はNodeの `util.parseArgs` で解析する。`serve` は `apps/server` の `startServer` を呼ぶだけで、サーバーの組み立ては二重に持たない。
+
+- **単一実行ファイル**: `bun build --compile` で、Bun本体、サーバー、ビルド済みSPA（`apps/web/dist`）、マイグレーション（`packages/db/drizzle`）を1ファイルにまとめる。SPAは `with { type: "file" }` で埋め込み、マイグレーションはSQLとジャーナルを `with { type: "text" }` で埋め込み、起動時にOSの一時ディレクトリ（`tasuki-migrations-*`）へ書き出して、drizzleの公開API `migrate()` に渡す（適用後に削除。drizzleの内部は触らない）。この埋め込み一覧はビルド時に `scripts/build-bin.ts` が生成するエントリ（`dist/.entry/`）に書き、リポジトリには置かない。リポジトリ内で `bun` から直接動かすときは従来どおりディスク上の `apps/web/dist` と `packages/db/drizzle` を読む。ビルド対象は linux-x64 / linux-arm64 / darwin-x64 / darwin-arm64 / windows-x64。ファイル名は `tasuki-<os>-<arch>`（Windowsのみ `.exe`）。
+- **設定は環境変数だけ**: `TASUKI_DATA`（既定 `./tasuki-data`）、`PORT`（既定3000）、`TASUKI_BASE_URL`、`TASUKI_TRUST_PROXY`、`TASUKI_WEBHOOK_ALLOW_PRIVATE`。`serve` の `--data` / `--port` は同名の環境変数を上書きするだけ。`TASUKI_BASE_URL` を指定しないときの既定は、実際に待ち受けているポートの `http://localhost:<port>`（`--port` / `PORT` を変えてもログインのOrigin検査と通知のリンクが合う）。`--port` の検査は `serve` と `healthcheck` だけで行う。
+- **自動バックアップ**: 起動時に、DBファイルが既にあり、未適用のマイグレーションがあるときだけ、適用の直前に `<data>/backups/tasuki-<UTC時刻>.db` へ `VACUUM INTO` で保存する。新規DBや、適用済みのDBでは作らない。古いバックアップの自動削除はしない（容量はDBと同程度で、消す判断は利用者に任せる）。
+- **`backup [--out FILE]`**: 同じく `VACUUM INTO`（`packages/db` の `snapshot()` を共有）。WALのままサーバーが動いていても一貫したスナップショットが取れる。既定の出力先は `<data>/backups/`。既存ファイルへの上書きはしない（`VACUUM INTO` が拒否する）。
+- **`export`**: `--format md|json`。**トークンではなく、データディレクトリへのファイルアクセスで動く管理者向けのローカルツール**であり、サーバーが動いていなくてもよい。DBを読み取り専用（`openDbReadonly`。マイグレーションも走らせない）で開き、最初のシステム管理者を `read` スコープのトークン相当の行為者（`via: cli`、`auth: token`）にして、`core` の読み取り関数（`systemAdminId` / `listUsers` / `listIssueTypes` / `listProjects` / `pageIssues` / `getIssue`）だけを通す（CLIはDBハンドルを開く以外にDBを直接触らない）。書き込み、承認、完了はこの経路からは一切できない。mdは1チケット＝1ファイル（`<出力先>/<PROJECT>/<REF>.md`）で、frontmatter（ref、title、status、type、assignee、reporter、priority、labels、due、created、updated）、本文、受け入れ条件（結果と証拠つき）、コメントを書く。jsonは全プロジェクトのチケットを1つのJSONにする（`--out` 省略時は標準出力）。`--project KEY` で絞れる。
+- **`mcp`**: `--url`（`TASUKI_URL`）と `--token`（`TASUKI_TOKEN`）。`--url` はサーバーのURL（パスが空なら `/mcp` を補う。`/mcp` までの完全なURLもそのまま使える）。`http:` でループバック以外へ向けるときは、トークンが平文で流れるとstderrに警告する。標準入出力のMCPメッセージを、BearerトークンつきでサーバーのStreamable HTTP `/mcp` に中継するだけで、ツールの定義は持たない。トークンは出力にもエラーにも出さない。コマンドラインに渡したトークンは `ps` に見えるので、READMEでは環境変数での指定を勧める。
+- **`agent-setup [--dir .] [--url URL]`**: `CLAUDE.md` と `AGENTS.md` に `<!-- tasuki:start -->` から `<!-- tasuki:end -->` までの区間を書く。区間があれば置き換え、なければ末尾に足す（何度実行しても同じ結果、区間の外は触らない）。内容は、着手（`next_task`）→計画（`submit_plan`）→人間の承認を待つ→実装（`start_implementation`）→受け入れ条件ごとに証拠（`record_evidence`）→報告（`submit_report`）の手順と、承認を試みない、詰まったら `ask_question` で聞く、という約束。最後に `claude mcp add` の例を表示する。
+- **`healthcheck [--port N]`**: `http://127.0.0.1:<--port または $PORT>/health` を叩いて、200なら終了コード0、それ以外は1。Dockerの `HEALTHCHECK` がcurlなしで使う（`PORT` 環境変数を読むので、コンテナのポートは `-e PORT=...` で変える）。
+
+**npm**: `@suzukitech/tasuki` は `bin/tasuki.js`（Nodeで動く十数行の起動役）だけを持ち、`optionalDependencies` に `@suzukitech/tasuki-<os>-<arch>`（`os` / `cpu` フィールド付き、中身は実行ファイル1つ）を同じバージョンで並べる。起動役はまずLinuxでglibcがない環境（Alpine/musl）を検出して「未対応。Dockerかglibc環境で」と案内して終了し、次に `process.platform` / `process.arch` からパッケージ名を決め、`require.resolve` で実行ファイルを探して、標準入出力を引き継いで起動し、終了コードを返す。見つからなければ、対応OS・`--no-optional` で入れていないかを案内して終了する。**バージョンの正本はルートの `package.json`**（CLIの `--version`、npmの全パッケージ、リリースのタグ検証がここから読む）。`scripts/gen-npm.ts` が `dist/bin` からプラットフォームパッケージを生成する（対象の表は `scripts/platforms.ts` の1か所。起動役は依存なしで動く必要があるので自前の最小の表を持つ）。実行ビットはアーティファクトの受け渡しで落ちるため、公開直前のリリースワークフローの `chmod +x` の1か所だけで付ける。
+
+**Docker**: `oven/bun:1.4.5`（ベースイメージはどちらもマルチアーキのindex digestで固定）でSPAと実行ファイルをビルドし、実行ファイルだけを `debian:bookworm-slim` に置く（Bun製の実行ファイルはglibcに動的リンクするため、静的なdistrolessは使えず、`gcr.io/distroless/cc` 相当のglibcとlibstdc++が要る）。非rootユーザー、`VOLUME /data`、`EXPOSE 3000`、`ENTRYPOINT ["tasuki"]`、`CMD ["serve"]`。ローカルにDockerがないので、PRごとにCIでビルドして `docker run` で `/health` を確認する。
+
+**リリース**: `v*` タグのpushだけが公開処理を動かす（`.github/workflows/release.yml`）。チェック、5つの実行ファイルのビルド（Linux実行ファイルは `--version`、`serve`、`healthcheck` のスモークテスト付き）、プラットフォームごとの `.tar.gz` と、そのチェックサム `SHA256SUMS` を付けたGitHub Release、GHCRへのマルチアーキテクチャのイメージ、npmのプラットフォームパッケージ→本体の順の公開（`--provenance --access public`。同じバージョンが既にあるパッケージは飛ばすので、失敗した公開を再実行できる）。Dockerのジョブはチェックとビルドの成功後にだけ動く。通常のpushとPRで動くのは、既存のCIと、Dockerイメージのビルド確認だけ。タグとルートの `package.json` のバージョンが違えば公開前に失敗させる。

@@ -10,6 +10,13 @@
 		"verbatimModuleSyntax": true,
 		"types": ["bun"]
 	},
-	"include": ["apps/*/src", "apps/*/test", "packages/*/src", "packages/*/test"],
+	"include": [
+		"apps/*/src",
+		"apps/*/test",
+		"packages/*/src",
+		"packages/*/test",
+		"scripts",
+		"npm/test"
+	],
 	"exclude": ["apps/web"]
 }

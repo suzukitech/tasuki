@@ -3,9 +3,12 @@ import {
 	addMember,
 	changeMemberRole,
 	type IssueEvent,
+	listIssueTypes,
+	listUsers,
 	projectDetail,
 	removeMember,
 	renameStatus,
+	systemAdminId,
 	TasukiError,
 } from "../src/index";
 import { setup } from "./fixture";
@@ -126,5 +129,22 @@ describe("renameStatus", () => {
 		expect(
 			code(() => renameStatus(ctx(u.mgr), "WEB", "nope", { name: "x" })),
 		).toBe("not_found:404");
+	});
+});
+
+describe("admin-tool reads", () => {
+	test("systemAdminId, listUsers, listIssueTypes", () => {
+		const { db, ctx, u } = setup();
+		expect(systemAdminId(db)).toBe(u.admin.id);
+		const names = listUsers(ctx(u.admin)).map((x) => x.name);
+		expect(names).toContain("mem");
+		expect(Object.keys(listUsers(ctx(u.admin))[0] ?? {}).sort()).toEqual([
+			"id",
+			"name",
+		]);
+		expect(listIssueTypes(ctx(u.admin)).length).toBeGreaterThan(0);
+		expect(() =>
+			listUsers(ctx(u.admin, "token", { scopes: [], projectIds: null })),
+		).toThrow();
 	});
 });

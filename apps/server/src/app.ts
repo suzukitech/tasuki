@@ -209,6 +209,8 @@ export function createApp(
 		trustProxy?: boolean;
 		/** Built SPA (apps/web/dist). Absent or missing on disk: nothing is served. */
 		webDir?: string;
+		/** Embedded SPA (compiled binary): URL path ("/index.html", "/assets/x.js") -> file path. Wins over webDir. */
+		webAssets?: Record<string, string>;
 		/** Attachments live in `<dataDir>/attachments/`. */
 		dataDir?: string;
 		webhook?: Omit<Parameters<typeof createWebhooks>[1], "baseUrl">;
@@ -737,13 +739,25 @@ export function createApp(
 
 	// --- SPA: static files, and index.html for every other non-API GET (client-side routes) ---
 	const webDir = opts.webDir && resolve(opts.webDir);
-	if (webDir)
+	const assets = opts.webAssets;
+	/** The file for a URL path, or undefined (traversal-safe for the directory form). */
+	const find = (p: string) => {
+		const d = safeDecode(p);
+		if (assets)
+			return Object.hasOwn(assets, d)
+				? Bun.file(assets[d] as string)
+				: undefined;
+		const file = webDir && resolve(webDir, `.${d}`);
+		return webDir && file?.startsWith(webDir + sep)
+			? Bun.file(file)
+			: undefined;
+	};
+	if (webDir || assets)
 		app.get("*", async (c) => {
 			const p = c.req.path;
 			if (p === "/api" || p.startsWith("/api/") || p.startsWith("/mcp"))
 				return c.notFound();
-			const file = resolve(webDir, `.${safeDecode(p)}`);
-			const hit = file.startsWith(webDir + sep) && Bun.file(file);
+			const hit = find(p);
 			if (hit && (await hit.exists()))
 				return new Response(hit, {
 					headers: p.startsWith("/assets/")
@@ -752,8 +766,8 @@ export function createApp(
 				});
 			// a missing asset or a path with a file extension is a real 404, not a client route
 			if (p.startsWith("/assets/") || /\.[^/]+$/.test(p)) return c.notFound();
-			const index = Bun.file(resolve(webDir, "index.html"));
-			return (await index.exists())
+			const index = find("/index.html");
+			return index && (await index.exists())
 				? new Response(index, {
 						headers: {
 							"content-type": "text/html; charset=utf-8",

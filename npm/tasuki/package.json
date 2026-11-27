@@ -1,0 +1,25 @@
+{
+	"name": "@suzukitech/tasuki",
+	"version": "0.0.0",
+	"description": "Redmineに代わる、AIネイティブなチケット管理 (Tasuki)",
+	"license": "MIT",
+	"bin": {
+		"tasuki": "bin/tasuki.js"
+	},
+	"files": [
+		"bin",
+		"README.md",
+		"LICENSE"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/suzukitech/tasuki.git"
+	},
+	"homepage": "https://github.com/suzukitech/tasuki#readme",
+	"engines": {
+		"node": ">=18"
+	},
+	"publishConfig": {
+		"access": "public"
+	}
+}

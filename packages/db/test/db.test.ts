@@ -1,4 +1,8 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import {
 	agentSessions,
@@ -176,5 +180,73 @@ describe("review fixes", () => {
 			.where(eq(agentSessions.id, first.id))
 			.run();
 		expect(() => db.insert(agentSessions).values(open).run()).not.toThrow();
+	});
+});
+
+describe("migrations", () => {
+	const dir = () => mkdtempSync(join(tmpdir(), "tasuki-db-"));
+	const journal = {
+		entries: [
+			{ tag: "0000_a", when: 1000, breakpoints: true },
+			{ tag: "0001_b", when: 2000, breakpoints: true },
+		],
+	};
+	const sqlByTag = {
+		"0000_a": "CREATE TABLE a (x int);",
+		"0001_b":
+			"CREATE TABLE b (x int);--> statement-breakpoint\nCREATE TABLE c (x int);",
+	};
+
+	test("embedded migrations apply through the public migrate(); a missing file is an error", () => {
+		const db = openDb(":memory:", { migrations: { journal, sql: sqlByTag } });
+		expect(
+			db.$client
+				.query(
+					"SELECT count(*) AS n FROM sqlite_master WHERE name IN ('a','b','c')",
+				)
+				.get(),
+		).toEqual({ n: 3 });
+		expect(() =>
+			openDb(":memory:", { migrations: { journal, sql: {} } }),
+		).toThrow("0000_a");
+	});
+
+	test("snapshot before pending migrations only on an already-migrated db", () => {
+		const d = dir();
+		const path = join(d, "t.db");
+		const backups = join(d, "backups");
+		const first = {
+			journal: { entries: journal.entries.slice(0, 1) },
+			sql: sqlByTag,
+		};
+		const all = { journal, sql: sqlByTag };
+		// fresh db: nothing to protect
+		openDb(path, {
+			migrations: first,
+			backupDir: backups,
+		}).$client.close();
+		expect(existsSync(backups)).toBe(false);
+		// up to date: no backup
+		openDb(path, {
+			migrations: first,
+			backupDir: backups,
+		}).$client.close();
+		expect(existsSync(backups)).toBe(false);
+		// one pending migration: snapshot taken from the pre-migration state
+		openDb(path, { migrations: all, backupDir: backups }).$client.close();
+		const files = readdirSync(backups);
+		expect(files).toHaveLength(1);
+		const snap = new Database(join(backups, files[0] as string), {
+			readonly: true,
+		});
+		const tables = snap
+			.query<{ name: string }, []>(
+				"SELECT name FROM sqlite_master WHERE type='table'",
+			)
+			.all()
+			.map((t) => t.name);
+		expect(tables).toContain("a");
+		expect(tables).not.toContain("b");
+		snap.close();
 	});
 });

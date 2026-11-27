@@ -17,3 +17,5 @@ process.on("SIGINT", () => {
 });
 await Promise.race(procs.map((p) => p.exited));
 for (const p of procs) p.kill();
+
+export {};

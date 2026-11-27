@@ -1,4 +1,5 @@
 import {
+	type Conn,
 	createDefaultIssueTypes,
 	createDefaultStatuses,
 	issueTypes,
@@ -261,4 +262,30 @@ export function projectDetail(ctx: Ctx, key: string) {
 			.where(eq(issueTypes.projectId, p.id))
 			.all(),
 	};
+}
+
+/** Id of the first system admin, or undefined before first-run setup. For local admin tools that need an actor. */
+export function systemAdminId(db: Conn): string | undefined {
+	return db
+		.select({ id: users.id })
+		.from(users)
+		.where(eq(users.role, "admin"))
+		.orderBy(asc(users.createdAt))
+		.limit(1)
+		.get()?.id;
+}
+
+/** Every user's id and display name (no emails or hashes): for resolving names in exports. */
+export function listUsers(ctx: Ctx) {
+	requireScope(ctx, "read");
+	return ctx.db.select({ id: users.id, name: users.name }).from(users).all();
+}
+
+/** Every issue type's id and name. */
+export function listIssueTypes(ctx: Ctx) {
+	requireScope(ctx, "read");
+	return ctx.db
+		.select({ id: issueTypes.id, name: issueTypes.name })
+		.from(issueTypes)
+		.all();
 }
