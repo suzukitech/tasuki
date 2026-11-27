@@ -22,6 +22,8 @@ Tasuki は、Claude Code などのコーディングエージェントが実装�
 docker run -d --name tasuki -p 3000:3000 -v tasuki-data:/data ghcr.io/suzukitech/tasuki:latest
 ```
 
+コンテナのポートを変えるときは `-e PORT=8080 -p 8080:8080` のように **`PORT` 環境変数**で指定します（`HEALTHCHECK` は `PORT` を読みます。`serve --port` だけを変えるとヘルスチェックが合いません）。
+
 コンテナは非rootユーザー（UID 10001）で動きます。`-v ./data:/data` のようにホストのフォルダを使うときは、先に `chown 10001 ./data` してください。
 
 **npx（試す・個人で使う）**
@@ -30,15 +32,15 @@ docker run -d --name tasuki -p 3000:3000 -v tasuki-data:/data ghcr.io/suzukitech
 npx @suzukitech/tasuki serve --data ./tasuki-data
 ```
 
-Node.js 18 以上が要りますが、中身は Bun で作った実行ファイルで、Node のバージョンには左右されません（OS ごとのパッケージが `optionalDependencies` で入ります。`--no-optional` を付けないでください）。Linux は glibc のみ対応で、Alpine（musl）では動きません。
+Node.js 18 以上が要りますが、中身は Bun で作った実行ファイルで、Node のバージョンには左右されません（OS ごとのパッケージが `optionalDependencies` で入ります。`--no-optional` を付けないでください）。Linux は glibc のみ対応で、Alpine（musl）では起動役が案内を出して終了します（Docker か glibc の環境で使ってください）。
 
 **実行ファイル**
 
-[GitHub Releases](https://github.com/suzukitech/tasuki/releases) から OS に合うファイル（linux / darwin の x64・arm64、windows x64）と `SHA256SUMS` をダウンロードします。
+[GitHub Releases](https://github.com/suzukitech/tasuki/releases) から OS に合う `tasuki-<os>-<arch>.tar.gz`（linux / darwin の x64・arm64、windows x64）と `SHA256SUMS` をダウンロードします。
 
 ```sh
 sha256sum -c SHA256SUMS --ignore-missing
-chmod +x tasuki-linux-x64 && ./tasuki-linux-x64 serve
+tar xzf tasuki-linux-x64.tar.gz && ./tasuki-linux-x64 serve
 ```
 
 ## HTTPS（Caddy の例）
@@ -70,7 +72,7 @@ claude mcp add --transport http tasuki https://<your-host>/mcp --header "Authori
 
 計画の承認と完了はブラウザからだけです。AIは `submit_plan` が返すURLをあなたに見せて待ちます。
 
-**HTTP に対応しない MCP クライアントには `tasuki mcp`**（標準入出力 → HTTP の中継）を使います。トークンは環境変数で渡すと `ps` に出ません。
+**HTTP に対応しない MCP クライアントには `tasuki mcp`**（標準入出力 → HTTP の中継）を使います。`TASUKI_URL` にはサーバーの URL（`https://<your-host>`。`/mcp` までの完全な URL でも可）を指定します。トークンは `--token` ではなく**環境変数 `TASUKI_TOKEN`** で渡してください（コマンドライン引数は `ps` に見えます）。`http://` でループバック以外に接続すると、トークンが平文で流れるという警告を出します。
 
 ```json
 {
@@ -79,7 +81,7 @@ claude mcp add --transport http tasuki https://<your-host>/mcp --header "Authori
 			"command": "npx",
 			"args": ["-y", "@suzukitech/tasuki", "mcp"],
 			"env": {
-				"TASUKI_URL": "https://<your-host>/mcp",
+				"TASUKI_URL": "https://<your-host>",
 				"TASUKI_TOKEN": "tsk_..."
 			}
 		}
@@ -120,8 +122,8 @@ tasuki export --format md --project WEB ...                       # プロジェ
 | 変数                           | 既定値                               | 説明                                                          |
 | ------------------------------ | ------------------------------------ | ------------------------------------------------------------- |
 | `TASUKI_DATA`                  | `./tasuki-data`（Docker は `/data`） | SQLite と添付ファイルの置き場所。`--data` が優先              |
-| `PORT`                         | `3000`                               | 待ち受けポート。`--port` が優先                               |
-| `TASUKI_BASE_URL`              | `http://localhost:3000`              | 公開 URL。CSRF の Origin 検査と通知のリンクに使う             |
+| `PORT`                         | `3000`                               | 待ち受けポート。`--port` が優先（Docker ではこちらで変える）  |
+| `TASUKI_BASE_URL`              | `http://localhost:<ポート>`          | 公開 URL。CSRF の Origin 検査と通知のリンクに使う             |
 | `TASUKI_TRUST_PROXY`           | 未設定                               | `1` でリバースプロキシの `X-Forwarded-For` を信用する         |
 | `TASUKI_WEBHOOK_ALLOW_PRIVATE` | 未設定                               | `1` で Webhook の送信先にプライベート IP を許す（既定は拒否） |
 | `TASUKI_URL` / `TASUKI_TOKEN`  | なし                                 | `tasuki mcp` の接続先とトークン                               |
@@ -141,4 +143,4 @@ bun run build:bin  # dist/bin/ に5つの実行ファイル（引数で絞れる
 2. ルートの `package.json` の `version` を上げてコミット・push する（バージョンの正本はここ。タグと違うとリリースは公開前に失敗します）。
 3. `git tag vX.Y.Z && git push --tags`
 
-タグの push で `.github/workflows/release.yml` が、チェック → 5つの実行ファイルのビルド → GitHub Release（`SHA256SUMS` 付き）→ GHCR のイメージ（amd64 / arm64）→ npm（プラットフォームのパッケージ、続いて本体）の順に公開します。`0.2.0-rc.1` のようなプレリリースは `:latest` と npm の `latest` を動かしません。通常の push と PR では公開処理は動きません（CI がイメージをビルドして起動確認するだけです）。
+タグの push で `.github/workflows/release.yml` が、チェック → 5つの実行ファイルのビルド → GitHub Release（プラットフォームごとの `.tar.gz` と、その `SHA256SUMS` 付き）→ GHCR のイメージ（amd64 / arm64）→ npm（プラットフォームのパッケージ、続いて本体）の順に公開します。`0.2.0-rc.1` のようなプレリリースは `:latest` と npm の `latest` を動かしません。通常の push と PR では公開処理は動きません（CI がイメージをビルドして起動確認するだけです）。
