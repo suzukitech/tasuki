@@ -227,10 +227,13 @@ describe("projects & issues", () => {
 
 	test("projects list/get/patch", async () => {
 		const { a, h } = await world();
-		expect((await (await a.req("GET", "/projects")).json())[0]).toMatchObject({
-			key: "WEB",
-			role: "manager",
-		});
+		const mine = (await (await a.req("GET", "/projects")).json()) as {
+			key: string;
+			role: string;
+		}[];
+		// the first admin also has the sample project from setup
+		expect(mine.map((x) => x.key).sort()).toEqual(["DEMO", "WEB"]);
+		expect(mine.find((x) => x.key === "WEB")?.role).toBe("manager");
 		const d = await (await a.req("GET", "/projects/web")).json();
 		expect(d.statuses.length).toBeGreaterThan(0);
 		const p = await (

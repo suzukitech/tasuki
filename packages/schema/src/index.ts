@@ -1,16 +1,7 @@
 import { z } from "zod";
+import { PRIORITY_MAX } from "./pure";
 
-export const PRIORITIES = {
-	none: 0,
-	low: 1,
-	medium: 2,
-	high: 3,
-	urgent: 4,
-} as const;
-/** Priority label ("high"), "none" for null / 0. */
-export const priorityName = (p: number | null) =>
-	Object.entries(PRIORITIES).find(([, v]) => v === (p ?? 0))?.[0] ?? String(p);
-export const PRIORITY_MAX = Math.max(...Object.values(PRIORITIES));
+export * from "./pure";
 
 const md = (max = 4000) => z.string().max(max);
 export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;

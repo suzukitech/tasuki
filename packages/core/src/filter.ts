@@ -159,7 +159,7 @@ function listIssues(
 	opts: { limit: number; newestFirst?: boolean; cursor?: number },
 ) {
 	const project = getProject(ctx, projectKey);
-	return ctx.db
+	const rows = ctx.db
 		.select(LIST_COLUMNS)
 		.from(issues)
 		.where(
@@ -170,8 +170,28 @@ function listIssues(
 		)
 		.orderBy(opts.newestFirst ? desc(issues.number) : issues.number)
 		.limit(opts.limit)
-		.all()
-		.map((i) => ({ ...i, ref: refOf(project.key, i.number) }));
+		.all();
+	// labels for the whole page in one query
+	const byIssue = new Map<string, string[]>();
+	if (rows.length)
+		for (const r of ctx.db
+			.select({ issueId: issueLabels.issueId, name: labels.name })
+			.from(issueLabels)
+			.innerJoin(labels, eq(labels.id, issueLabels.labelId))
+			.where(
+				inArray(
+					issueLabels.issueId,
+					rows.map((i) => i.id),
+				),
+			)
+			.orderBy(labels.name)
+			.all())
+			byIssue.set(r.issueId, [...(byIssue.get(r.issueId) ?? []), r.name]);
+	return rows.map((i) => ({
+		...i,
+		ref: refOf(project.key, i.number),
+		labels: byIssue.get(i.id) ?? [],
+	}));
 }
 
 export const searchIssues = (

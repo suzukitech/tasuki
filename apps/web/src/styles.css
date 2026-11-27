@@ -1,0 +1,89 @@
+@import "tailwindcss";
+
+/* Design tokens: docs/DESIGN.md 「画面デザイン」 */
+:root {
+	--paper: #f7f8f6;
+	--surface: #ffffff;
+	--line: #e2e5e1;
+	--ink: #1f2933;
+	--nezumi: #5f6873;
+	--indigo: #23407a;
+	--asagi: #2f7f86;
+	--sash: #c42d3a;
+}
+
+@theme {
+	--color-paper: var(--paper);
+	--color-surface: var(--surface);
+	--color-line: var(--line);
+	--color-ink: var(--ink);
+	--color-nezumi: var(--nezumi);
+	--color-ai-indigo: var(--indigo);
+	--color-asagi: var(--asagi);
+	--color-sash: var(--sash);
+	--font-sans: "BIZ UDPGothic", system-ui, sans-serif;
+	--text-xs: 12px;
+	--text-sm: 13px;
+	--text-base: 14px;
+	--text-lg: 16px;
+	--text-xl: 20px;
+	--text-2xl: 24px;
+}
+
+html,
+body,
+#root {
+	height: 100%;
+}
+body {
+	background: var(--paper);
+	color: var(--ink);
+	font-family: var(--font-sans);
+	font-size: 14px;
+	line-height: 1.6;
+}
+.num {
+	font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+	outline: 2px solid var(--indigo);
+	outline-offset: 1px;
+}
+
+/* The one signature element: the sash stripe. Only "あなたの番" badges and human-gate column headers. */
+.sash {
+	position: relative;
+	padding-left: 14px;
+}
+.sash::before {
+	content: "";
+	position: absolute;
+	inset: 0 auto 0 0;
+	width: 8px;
+	background: repeating-linear-gradient(
+		135deg,
+		var(--sash) 0 4px,
+		transparent 4px 8px
+	);
+}
+
+/* Side panel: motion only for open/close */
+@keyframes panel-in {
+	from {
+		transform: translateX(24px);
+		opacity: 0;
+	}
+}
+.panel {
+	animation: panel-in 160ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+	.panel {
+		animation: none;
+	}
+}
+
+input[type="checkbox"] {
+	accent-color: var(--indigo);
+}

@@ -1,0 +1,16 @@
+{
+	"ui_review": {
+		"dev_url": "http://localhost:5173",
+		"start_script": "dev",
+		"watch": ["apps/web/**"],
+		"criteria": "docs/UI-REVIEW-CRITERIA.md",
+		"screens": "docs/UI-REVIEW-CRITERIA.md#画面と状態",
+		"tokens": "apps/web/src/styles.css",
+		"viewports": [
+			{ "name": "desktop", "width": 1440, "height": 900 },
+			{ "name": "laptop", "width": 1024, "height": 768 },
+			{ "name": "mobile", "width": 390, "height": 844 }
+		],
+		"output_dir": ".ui-review"
+	}
+}

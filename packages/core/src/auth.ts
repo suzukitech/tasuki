@@ -3,6 +3,7 @@ import {
 	type Conn,
 	type Db,
 	invites,
+	seedSampleProject,
 	sessions,
 	users,
 } from "@tasuki/db";
@@ -184,7 +185,10 @@ export async function setupFirstAdmin(db: Db, input: unknown) {
 	return db.transaction((tx) => {
 		if ((tx.select({ n: count() }).from(users).get()?.n ?? 0) > 0)
 			return fail("conflict", "setup already done");
-		return insertUser(tx, inp, passwordHash, { role: "admin" });
+		const admin = insertUser(tx, inp, passwordHash, { role: "admin" });
+		// a fresh install opens onto something to look at, and the admin can manage it
+		seedSampleProject(tx, admin.id);
+		return admin;
 	});
 }
 

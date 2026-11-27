@@ -1,3 +1,4 @@
+import { type Category, STATUS_CATEGORIES } from "@tasuki/schema/pure";
 import { sql } from "drizzle-orm";
 import {
 	type AnySQLiteColumn,
@@ -21,15 +22,7 @@ const now = (name: string) =>
 		.$defaultFn(() => new Date());
 const createdAt = () => now("created_at");
 
-export const STATUS_CATEGORIES = [
-	"draft",
-	"ready",
-	"plan_review",
-	"in_progress",
-	"impl_review",
-	"done",
-] as const;
-export type Category = (typeof STATUS_CATEGORIES)[number];
+export { type Category, STATUS_CATEGORIES };
 
 export const users = sqliteTable("users", {
 	id: id(),

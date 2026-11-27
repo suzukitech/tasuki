@@ -1,5 +1,5 @@
 import { activities, type Conn } from "@tasuki/db";
-import type { tokenInput } from "@tasuki/schema";
+import type { EventType, tokenInput } from "@tasuki/schema";
 import type { z } from "zod";
 
 export type Actor = {
@@ -12,7 +12,7 @@ export type Actor = {
 		projectIds: string[] | null;
 	};
 };
-export type IssueEvent = { type: string; projectId: string; ref: string };
+export type IssueEvent = { type: EventType; projectId: string; ref: string };
 export type Ctx = {
 	db: Conn;
 	actor: Actor;
@@ -65,8 +65,12 @@ export function atomic<T>(ctx: Ctx, fn: (c: Ctx) => T): T {
 }
 
 /** Queue an issue event (call inside `atomic`). */
-export const record = (c: Ctx, type: string, projectId: string, ref: string) =>
-	void c.pending?.push({ type, projectId, ref });
+export const record = (
+	c: Ctx,
+	type: EventType,
+	projectId: string,
+	ref: string,
+) => void c.pending?.push({ type, projectId, ref });
 
 export function parse<T extends z.ZodType>(
 	schema: T,
