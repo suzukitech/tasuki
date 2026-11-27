@@ -87,6 +87,7 @@ describe("renameStatus", () => {
 	test("renames only the name, in this project, for managers over a session", () => {
 		const { ctx, u } = setup();
 		const st = projectDetail(ctx(u.mgr), "WEB").statuses[0];
+		if (!st) throw new Error("no status");
 		const r = renameStatus(ctx(u.mgr), "WEB", st.id, { name: "  Inbox " });
 		expect(r).toMatchObject({
 			name: "Inbox",
