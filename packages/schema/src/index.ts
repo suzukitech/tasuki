@@ -17,6 +17,16 @@ export const updateProjectInput = z
 	.object({ name: createProjectInput.shape.name, description: md() })
 	.partial();
 
+const memberRole = z.enum(["manager", "member", "viewer"]);
+export const addMemberInput = z.object({
+	email: z.string().trim().toLowerCase().pipe(z.email()),
+	role: memberRole,
+});
+export const memberRoleInput = z.object({ role: memberRole });
+export const statusRenameInput = z.object({
+	name: z.string().trim().min(1).max(50),
+});
+
 const title = z.string().trim().min(1).max(200);
 const bodyMd = md(50000);
 const flow = z.enum(["ai", "simple"]);
