@@ -150,22 +150,66 @@ describe("ETag / 412 handling", () => {
 	});
 	test("412 means conflict + refetch toast", () => {
 		const w = writeError(new ApiError(412, "precondition", "stale"));
-		expect(w).toEqual({ conflict: true, key: "toast.conflict" });
-		expect(t(w.key)).toBe(
-			"他の人が先に更新しました。最新の内容を読み込みました",
-		);
-	});
-	test("other failures", () => {
-		expect(writeError(new ApiError(403, "forbidden", "no")).key).toBe(
-			"toast.forbidden",
-		);
-		expect(writeError(new ApiError(409, "gate", "no")).key).toBe("toast.gate");
-		expect(writeError(new ApiError(409, "conflict", "bad state"))).toEqual({
-			conflict: false,
-			key: "toast.failed",
-			detail: "bad state",
+		expect(w).toEqual({
+			conflict: true,
+			text: "他の人が先に更新しました。最新の内容を読み込みました",
 		});
-		expect(writeError(new TypeError("fetch failed")).key).toBe("toast.network");
+	});
+	test("known refusals become plain Japanese, never the server's English", () => {
+		const e = (status: number, code: string, msg: string) =>
+			new ApiError(status, code, msg);
+		const enter = e(
+			400,
+			"invalid",
+			"use submitPlan / submitReport to enter a review state",
+		);
+		expect(writeError(enter, { to: "plan_review" }).text).toContain(
+			"計画確認へは、計画を提出すると進みます",
+		);
+		expect(writeError(enter, { to: "impl_review" }).text).toContain(
+			"結果確認へは",
+		);
+		expect(writeError(enter).text).not.toMatch(/[a-z]{4}/);
+		const leave = e(
+			409,
+			"gate",
+			"use approve/reject (plan) or accept/return (report) to leave a review state",
+		);
+		expect(writeError(leave).text).toBe(t("toast.leaveReview"));
+		expect(
+			writeError(e(409, "gate", "no approved plan: submit a plan")).text,
+		).toBe(t("toast.noPlan"));
+		expect(
+			writeError(
+				e(
+					409,
+					"gate",
+					"complete (in_progress -> done) requires a human login session, not an access token",
+				),
+			).text,
+		).toBe(t("toast.gate"));
+		expect(
+			writeError(e(409, "conflict", "cannot go from 'draft' to 'done' (move)"))
+				.text,
+		).toBe(t("toast.badMove"));
+		expect(
+			writeError(e(403, "forbidden", "approver or project manager only")).text,
+		).toBe(t("toast.forbidden"));
+	});
+	test("prefix leads; unknown English is dropped, Japanese detail is kept", () => {
+		const p = { prefix: t("move.fail") };
+		expect(writeError(new ApiError(500, "error", "boom"), p).text).toBe(
+			`${t("move.fail")}${t("toast.failed")}`,
+		);
+		expect(
+			writeError(new ApiError(400, "invalid", "名前が長すぎます"), p).text,
+		).toContain("名前が長すぎます");
+		expect(writeError(new ApiError(412, "precondition", "x"), p).text).toBe(
+			t("toast.conflict"),
+		);
+		expect(writeError(new TypeError("fetch failed")).text).toBe(
+			t("toast.network"),
+		);
 	});
 	test("t fills placeholders", () => {
 		expect(t("plan.version", { n: 2 })).toBe("第2版");

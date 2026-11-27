@@ -19,7 +19,6 @@ import {
 } from "react";
 import { t } from "../i18n";
 import { api } from "../lib/api";
-import { moveError } from "../lib/board";
 import { absoluteDate, relativeDue } from "../lib/format";
 import { keyAction } from "../lib/keys";
 import { PRIORITY_KEYS } from "../lib/priority";
@@ -51,6 +50,7 @@ import {
 	NoAvatar,
 	PriorityGlyph,
 	priorityOptions,
+	Segmented,
 	Skeleton,
 	StatusDot,
 	TurnBadge,
@@ -269,21 +269,36 @@ export function ProjectView({
 	const q = search.q ?? "";
 	const review = search.view === "review";
 	const board = search.view === "board";
-	const list = useIssues(projectKey, q);
+	// the board needs whole columns: ask for big pages (the server's maximum is 200)
+	const list = useIssues(projectKey, q, board ? 200 : 50);
 	const queue = useReviewQueue(projectKey, project, me);
 	const toast = useToast();
 	const edit = useInlineEdit(projectKey);
-	const move = useInlineEdit(projectKey, (e) => toast(moveError(e)));
+	const dragging = useRef(false);
 	const rows = useMemo(
 		() =>
 			review ? queue.items : (list.data?.pages.flatMap((p) => p.items) ?? []),
 		[review, queue.items, list.data],
 	);
 	// the board shows whole columns: keep loading until the list is complete
-	const { hasNextPage, isFetchingNextPage, fetchNextPage } = list;
+	// (stop on an error: retrying in a loop would hammer a failing server)
+	const {
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+		isFetchNextPageError,
+	} = list;
 	useEffect(() => {
-		if (board && hasNextPage && !isFetchingNextPage) fetchNextPage();
-	}, [board, hasNextPage, isFetchingNextPage, fetchNextPage]);
+		if (board && hasNextPage && !isFetchingNextPage && !isFetchNextPageError)
+			fetchNextPage();
+	}, [
+		board,
+		hasNextPage,
+		isFetchingNextPage,
+		isFetchNextPageError,
+		fetchNextPage,
+	]);
+	const partial = board && (hasNextPage || isFetchingNextPage);
 	const [sel, setSel] = useState(-1);
 	const [ai, setAi] = useState(true);
 	const [draft, setDraft] = useState("");
@@ -318,7 +333,8 @@ export function ProjectView({
 			else if (a === "next") setSel((i) => Math.min(i + 1, rows.length - 1));
 			else if (a === "prev") setSel((i) => Math.max(i - 1, 0));
 			else if (a === "open") rows[sel] && go({ issue: rows[sel].ref });
-			else if (a === "close" && search.issue) go({ issue: undefined });
+			else if (a === "close" && search.issue && !dragging.current)
+				go({ issue: undefined });
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
@@ -348,6 +364,7 @@ export function ProjectView({
 			creating.current = false;
 		}
 	};
+	const onOpen = useCallback((ref: string) => go({ issue: ref }), [go]);
 	const onSearch = (e: KeyboardEvent<HTMLInputElement>) => {
 		if (e.key === "Escape") e.currentTarget.blur();
 		if (e.key === "Enter" && !e.nativeEvent.isComposing)
@@ -390,31 +407,15 @@ export function ProjectView({
 							)}
 						</h1>
 						{!review && (
-							<fieldset className="m-0 flex min-w-0 rounded-control border-0 bg-paper p-0.5">
-								<legend className="sr-only">{t("view.switch")}</legend>
-								{(
-									[
-										[false, List, "nav.list"],
-										[true, Columns3, "nav.board"],
-									] as const
-								).map(([b, Icon, k]) => (
-									<button
-										key={k}
-										type="button"
-										aria-pressed={board === b}
-										onClick={() => go({ view: b ? "board" : undefined })}
-										className={cx(
-											"inline-flex items-center gap-1.5 rounded-[5px] px-2.5 text-xs leading-6 whitespace-nowrap pointer-coarse:min-h-10",
-											board === b
-												? "bg-surface font-medium text-ink shadow-[0_0_0_1px_var(--line-strong)]"
-												: "text-nezumi hover:text-ink",
-										)}
-									>
-										<Icon {...iconProps} />
-										{t(k)}
-									</button>
-								))}
-							</fieldset>
+							<Segmented
+								value={board}
+								onChange={(b) => go({ view: b ? "board" : undefined })}
+								label={t("view.switch")}
+								options={[
+									{ value: false, label: t("nav.list"), icon: List },
+									{ value: true, label: t("nav.board"), icon: Columns3 },
+								]}
+							/>
 						)}
 						{!review && (
 							<div className="relative w-72 max-md:w-full">
@@ -563,14 +564,43 @@ export function ProjectView({
 							</EmptyState>
 						)
 					) : board ? (
-						<Board
-							project={project}
-							me={me}
-							rows={rows}
-							openRef={search.issue}
-							onOpen={(ref) => go({ issue: ref })}
-							onMove={(row, to) => move.mutate({ row, patch: to })}
-						/>
+						<div className="flex h-full flex-col gap-2">
+							{partial && (
+								<p
+									role={isFetchNextPageError ? "alert" : "status"}
+									className={cx(
+										"flex flex-wrap items-center gap-2 text-xs",
+										isFetchNextPageError ? "text-sash" : "text-nezumi",
+									)}
+								>
+									{isFetchNextPageError
+										? t("board.partial.error")
+										: t("board.partial")}
+									{isFetchNextPageError && (
+										<Button onClick={() => fetchNextPage()}>
+											{t("list.retry")}
+										</Button>
+									)}
+								</p>
+							)}
+							<div className="min-h-0 flex-1">
+								<Board
+									project={project}
+									me={me}
+									rows={rows}
+									openRef={search.issue}
+									onOpen={onOpen}
+									locked={partial}
+									onDragging={(on) => {
+										dragging.current = on;
+									}}
+									onMove={(row, { appended, ...patch }) => {
+										edit.mutate({ row, patch });
+										if (appended) toast(t("board.appended"), "info");
+									}}
+								/>
+							</div>
+						</div>
 					) : (
 						<table className="w-full border-collapse text-sm max-md:block">
 							<thead className="max-md:hidden">

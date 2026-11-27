@@ -5,6 +5,7 @@ import {
 	DragOverlay,
 	KeyboardSensor,
 	PointerSensor,
+	useDndContext,
 	useDroppable,
 	useSensor,
 	useSensors,
@@ -16,9 +17,9 @@ import {
 	verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { type KeyboardEvent, useMemo, useState } from "react";
+import { type KeyboardEvent, memo, useMemo, useState } from "react";
 import { t } from "../i18n";
-import { colId, columnsOf, planDrop } from "../lib/board";
+import { colId, colOfOver, columnsOf, planDrop } from "../lib/board";
 import { relativeDue } from "../lib/format";
 import { PRIORITY_KEYS } from "../lib/priority";
 import { turnOf } from "../lib/turn";
@@ -80,7 +81,7 @@ function CardBody(p: { row: IssueRow; project: ProjectDetail; me: Me }) {
 
 const CARD = "rounded-control border border-line bg-surface p-2.5 text-left";
 
-function Card(p: {
+const Card = memo(function Card(p: {
 	row: IssueRow;
 	project: ProjectDetail;
 	me: Me;
@@ -89,6 +90,7 @@ function Card(p: {
 }) {
 	const s = useSortable({
 		id: p.row.id,
+		data: { statusId: p.row.statusId },
 		attributes: { roleDescription: t("board.card.role") },
 	});
 	const keys = s.listeners as
@@ -123,7 +125,7 @@ function Card(p: {
 			<CardBody row={p.row} project={p.project} me={p.me} />
 		</div>
 	);
-}
+});
 
 function Column(p: {
 	status: Status;
@@ -131,17 +133,21 @@ function Column(p: {
 	project: ProjectDetail;
 	me: Me;
 	openRef?: string;
-	over: boolean;
 	onOpen: (ref: string) => void;
 }) {
 	const drop = useDroppable({ id: colId(p.status.id) });
+	// highlighted while the pointer is over the column or any card in it
+	const over = useDndContext().over?.id;
+	const isOver =
+		over !== undefined &&
+		(over === colId(p.status.id) || p.rows.some((r) => r.id === over));
 	const gate = GATES.has(p.status.category);
 	return (
 		<section
 			aria-label={p.status.name}
 			className={cx(
 				"flex w-72 shrink-0 flex-col rounded-panel border bg-paper max-md:w-[78vw]",
-				p.over ? "border-ai-indigo bg-selection" : "border-line",
+				isOver ? "border-ai-indigo bg-selection" : "border-line",
 			)}
 		>
 			<header
@@ -195,14 +201,20 @@ export function Board(p: {
 	rows: IssueRow[];
 	openRef?: string;
 	onOpen: (ref: string) => void;
-	onMove: (row: IssueRow, to: { statusId: string; rank?: string }) => void;
+	onMove: (
+		row: IssueRow,
+		to: { statusId: string; rank?: string; appended?: true },
+	) => void;
+	/** columns are partial (still loading): cards stay put so ranks are never computed against half a column */
+	locked?: boolean;
+	/** true while a drag is in progress (Escape then cancels the drag, not the panel) */
+	onDragging?: (on: boolean) => void;
 }) {
 	const cols = useMemo(
 		() => columnsOf(p.project.statuses, p.rows),
 		[p.project.statuses, p.rows],
 	);
 	const [dragId, setDragId] = useState<string | null>(null);
-	const [overCol, setOverCol] = useState<string | null>(null);
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
 		useSensor(KeyboardSensor, {
@@ -216,15 +228,15 @@ export function Board(p: {
 		const row = byId.get(String(id));
 		return row ? `${row.ref} ${row.title}` : "";
 	};
-	const colNameOf = (overId: unknown) => {
-		for (const [sid, list] of cols)
-			if (colId(sid) === overId || list.some((i) => i.id === overId))
-				return p.project.statuses.find((s) => s.id === sid)?.name ?? "";
-		return "";
+	const colNameOf = (overId: unknown) =>
+		colOfOver(cols, overId)?.[0].name ?? "";
+	// Escape ends a drag before the page's own key handler runs: keep "dragging" up for this event
+	const stop = () => {
+		setDragId(null);
+		setTimeout(() => p.onDragging?.(false), 0);
 	};
 	const end = (e: DragEndEvent) => {
-		setDragId(null);
-		setOverCol(null);
+		stop();
 		if (!e.over) return;
 		const to = planDrop(cols, String(e.active.id), String(e.over.id));
 		const row = byId.get(String(e.active.id));
@@ -233,7 +245,7 @@ export function Board(p: {
 	const dragging = dragId ? byId.get(dragId) : undefined;
 	return (
 		<DndContext
-			sensors={sensors}
+			sensors={p.locked ? [] : sensors}
 			collisionDetection={closestCorners}
 			accessibility={{
 				screenReaderInstructions: { draggable: t("board.dnd.help") },
@@ -253,41 +265,25 @@ export function Board(p: {
 						t("board.dnd.cancel", { name: nameOf(active.id) }),
 				},
 			}}
-			onDragStart={(e) => setDragId(String(e.active.id))}
-			onDragOver={(e) => {
-				const id = e.over?.id;
-				setOverCol(
-					id === undefined
-						? null
-						: ([...cols].find(
-								([sid, l]) => colId(sid) === id || l.some((i) => i.id === id),
-							)?.[0] ?? null),
-				);
+			onDragStart={(e) => {
+				setDragId(String(e.active.id));
+				p.onDragging?.(true);
 			}}
 			onDragEnd={end}
-			onDragCancel={() => {
-				setDragId(null);
-				setOverCol(null);
-			}}
+			onDragCancel={stop}
 		>
 			<div className="flex h-full gap-3">
-				{[...cols].map(([sid, list]) => {
-					const status = p.project.statuses.find((s) => s.id === sid);
-					return (
-						status && (
-							<Column
-								key={sid}
-								status={status}
-								rows={list}
-								project={p.project}
-								me={p.me}
-								openRef={p.openRef}
-								over={overCol === sid}
-								onOpen={p.onOpen}
-							/>
-						)
-					);
-				})}
+				{cols.map(([status, list]) => (
+					<Column
+						key={status.id}
+						status={status}
+						rows={list}
+						project={p.project}
+						me={p.me}
+						openRef={p.openRef}
+						onOpen={p.onOpen}
+					/>
+				))}
 			</div>
 			<DragOverlay>
 				{dragging && (

@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { isIssueRef, isProjectKey } from "@tasuki/schema/pure";
-import { ApiError } from "../src/lib/api";
-import { colId, columnsOf, moveError, planDrop } from "../src/lib/board";
+import { colId, colOfOver, columnsOf, planDrop } from "../src/lib/board";
 import { filterCommands, issueRefOf } from "../src/lib/palette";
 import { expiryIso, tokenView } from "../src/lib/settings";
 import type { IssueRow, Status } from "../src/lib/types";
@@ -46,16 +45,21 @@ const cols = columnsOf(
 
 describe("board columns", () => {
 	test("status order by position, cards by rank, empty column kept", () => {
-		expect([...cols.keys()]).toEqual(["a", "b", "c"]);
-		expect(cols.get("a")?.map((r) => r.id)).toEqual(["y", "x", "z"]);
-		expect(cols.get("c")).toEqual([]);
+		expect(cols.map(([s]) => s.id)).toEqual(["a", "b", "c"]);
+		expect(cols[0]?.[1].map((r) => r.id)).toEqual(["y", "x", "z"]);
+		expect(cols[2]?.[1]).toEqual([]);
+	});
+	test("colOfOver finds the column of a card or of a column id", () => {
+		expect(colOfOver(cols, "w")?.[0].id).toBe("b");
+		expect(colOfOver(cols, colId("c"))?.[0].id).toBe("c");
+		expect(colOfOver(cols, "nope")).toBeUndefined();
 	});
 	test("ranks are compared as plain strings, not by locale", () => {
 		const c = columnsOf(
 			[st("a", 0)],
 			[row("u", "a", "a0", 1), row("v", "a", "Zz", 2)],
 		);
-		expect(c.get("a")?.map((r) => r.id)).toEqual(["v", "u"]);
+		expect(c[0]?.[1].map((r) => r.id)).toEqual(["v", "u"]);
 	});
 });
 
@@ -89,13 +93,7 @@ describe("planDrop", () => {
 			[st("a", 0)],
 			[row("p", "a", "a1", 1), row("q", "a", "a1", 2), row("r", "a", "a0", 3)],
 		);
-		expect(planDrop(dup, "r", "p")).toEqual({ statusId: "a" });
-	});
-	test("move failures show the server's words", () => {
-		expect(
-			moveError(new ApiError(409, "gate", "use approve/reject")),
-		).toContain("use approve/reject");
-		expect(moveError(new Error("x"))).toBeTruthy();
+		expect(planDrop(dup, "r", "p")).toEqual({ statusId: "a", appended: true });
 	});
 });
 
@@ -121,6 +119,7 @@ describe("command palette", () => {
 		expect(issueRefOf("WEB-012")).toBe("WEB-12");
 		expect(issueRefOf("fix web-12")).toBeNull();
 		expect(issueRefOf("W-1")).toBeNull();
+		expect(issueRefOf("WEB-0")).toBeNull();
 	});
 });
 

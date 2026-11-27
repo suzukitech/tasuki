@@ -59,7 +59,7 @@ function useAct(ref: string) {
 	const fail = useWriteFailure();
 	return useMutation({
 		mutationFn: (f: () => Promise<unknown>) => f(),
-		onError: fail,
+		onError: (e) => fail(e),
 		// returned, so per-call onSuccess runs after the refetch has landed
 		onSettled: () => refreshIssue(qc, ref),
 	});

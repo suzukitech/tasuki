@@ -1,3 +1,4 @@
+import { isIssueRef } from "@tasuki/schema/pure";
 import type { Key } from "../i18n";
 
 export type Cmd = {
@@ -17,7 +18,7 @@ export const norm = (s: string) => s.normalize("NFKC").toLowerCase();
 
 /**
  * Every whitespace-separated word of the query must appear in the label or keywords.
- * Label-prefix matches come first, then label matches, then keyword-only matches; ties keep their order.
+ * Label-prefix matches come first, then label matches, then keyword-only matches; ties keep their order (Array.sort is stable).
  */
 export function filterCommands<T extends Pick<Cmd, "label" | "keywords">>(
 	cmds: T[],
@@ -25,27 +26,28 @@ export function filterCommands<T extends Pick<Cmd, "label" | "keywords">>(
 ): T[] {
 	const words = norm(query).split(/\s+/).filter(Boolean);
 	if (words.length === 0) return cmds;
-	const scored: [number, number, T][] = [];
-	cmds.forEach((c, i) => {
+	const scored: [number, T][] = [];
+	for (const c of cmds) {
 		const label = norm(c.label);
 		const all = `${label} ${norm(c.keywords ?? "")}`;
-		if (!words.every((w) => all.includes(w))) return;
+		if (!words.every((w) => all.includes(w))) continue;
 		const score = label.startsWith(words[0] ?? "")
 			? 0
 			: words.every((w) => label.includes(w))
 				? 1
 				: 2;
-		scored.push([score, i, c]);
-	});
-	return scored.sort((a, b) => a[0] - b[0] || a[1] - b[1]).map((s) => s[2]);
+		scored.push([score, c]);
+	}
+	return scored.sort((a, b) => a[0] - b[0]).map((s) => s[1]);
 }
 
-/** "web-12" / "ＷＥＢ－１２" → "WEB-12"; anything else → null. */
+/** "web-12" / "ＷＥＢ－１２" → "WEB-12"; anything else (including WEB-0) → null. */
 export function issueRefOf(query: string): string | null {
 	const m = /^([a-z]{2,10})-(\d+)$/.exec(
 		norm(query)
 			.trim()
 			.replace(/[‐-―−ー]/g, "-"),
 	);
-	return m ? `${(m[1] ?? "").toUpperCase()}-${Number(m[2])}` : null;
+	const ref = m ? `${(m[1] ?? "").toUpperCase()}-${Number(m[2])}` : null;
+	return isIssueRef(ref) ? ref : null;
 }

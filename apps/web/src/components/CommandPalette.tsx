@@ -1,4 +1,4 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import { Search } from "lucide-react";
 import {
@@ -12,17 +12,16 @@ import {
 import { createPortal } from "react-dom";
 import { t } from "../i18n";
 import { api } from "../lib/api";
-import { moveError } from "../lib/board";
 import { projectOf } from "../lib/cache";
 import { type Cmd, filterCommands, issueRefOf } from "../lib/palette";
 import {
 	issueQuery,
-	refreshIssue,
+	useInlineEdit,
 	useProject,
 	useProjects,
 } from "../lib/queries";
 import type { Page } from "../lib/types";
-import { cx, iconProps, Kbd, useToast } from "./ui";
+import { cx, iconProps, Kbd } from "./ui";
 
 /** Debounced copy of a value: the search request waits for a pause in typing. */
 function useDebounced<T>(v: T, ms: number) {
@@ -37,19 +36,19 @@ function useDebounced<T>(v: T, ms: number) {
 /** Cmd/Ctrl+K: go anywhere, create, find an issue, act on the open one. Gates stay with the server. */
 export function CommandPalette({ onClose }: { onClose: () => void }) {
 	const nav = useNavigate();
-	const qc = useQueryClient();
-	const toast = useToast();
 	const uid = useId();
 	const projects = useProjects().data ?? [];
 	const { key: routeKey } = useParams({ strict: false }) as { key?: string };
 	const { issue: openRef } = useSearch({ strict: false }) as { issue?: string };
 	const projectKey =
 		routeKey ?? (openRef && projectOf(openRef)) ?? projects[0]?.key;
-	const project = useProject(projectKey ?? "").data;
+	// the open issue's own project decides its statuses, whatever the route says
+	const issueProject = useProject(openRef ? projectOf(openRef) : "").data;
 	const current = useQuery({
 		...issueQuery(openRef ?? ""),
 		enabled: !!openRef,
 	}).data;
+	const edit = useInlineEdit(openRef ? projectOf(openRef) : "");
 	const [query, setQuery] = useState("");
 	const [active, setActive] = useState(0);
 	const input = useRef<HTMLInputElement>(null);
@@ -67,6 +66,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 				`/projects/${encodeURIComponent(projectKey ?? "")}/issues?${new URLSearchParams({ q: text, limit: "10" })}`,
 			),
 		enabled: searching,
+		staleTime: 30_000,
 	});
 
 	const close = (restore = true) => {
@@ -157,29 +157,20 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 					);
 				},
 			});
-		if (openRef && project) {
-			const cur = current?.issue.statusId;
-			for (const s of project.statuses)
+		if (openRef && issueProject && current) {
+			const cur = current.issue.statusId;
+			for (const s of issueProject.statuses)
 				if (s.id !== cur)
 					out.push({
 						id: `status:${s.id}`,
 						label: t("palette.status", { name: s.name }),
 						group: "palette.group.issue",
 						keywords: `${openRef} status move`,
-						run: async () => {
-							try {
-								await api(
-									"POST",
-									`/issues/${encodeURIComponent(openRef)}/move`,
-									{
-										statusId: s.id,
-									},
-								);
-							} catch (e) {
-								toast(moveError(e));
-							}
-							await refreshIssue(qc, openRef);
-						},
+						run: () =>
+							edit.mutate({
+								row: { ref: openRef, updatedAt: current.issue.updatedAt },
+								patch: { statusId: s.id },
+							}),
 					});
 			out.push({
 				id: "closePanel",
@@ -190,7 +181,7 @@ export function CommandPalette({ onClose }: { onClose: () => void }) {
 			});
 		}
 		return out;
-	}, [projects, projectKey, project, openRef, current, nav, qc, toast]);
+	}, [projects, projectKey, issueProject, openRef, current, nav, edit.mutate]);
 
 	const items = useMemo<Cmd[]>(() => {
 		const hits: Cmd[] = [];
