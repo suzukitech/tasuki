@@ -40,6 +40,7 @@ describe("arg parsing", () => {
 			["nope"],
 			["serve", "--bogus"],
 			["serve", "--port", "abc"],
+			["healthcheck", "--port", "70000"],
 			["export", "--data", "/nonexistent"],
 			["mcp"],
 		]) {
@@ -47,6 +48,16 @@ describe("arg parsing", () => {
 			expect(await run(argv, undefined, c.io)).toBe(2);
 			expect(c.err.length).toBe(1);
 		}
+	});
+	test("--port is only validated for serve and healthcheck", async () => {
+		const c = cap();
+		expect(
+			await run(
+				["agent-setup", "--dir", tmp(), "--port", "abc"],
+				undefined,
+				c.io,
+			),
+		).toBe(0);
 	});
 	test("agent-setup prints the claude mcp add hint with a placeholder url", async () => {
 		const c = cap();
@@ -83,8 +94,13 @@ describe("arg parsing", () => {
 	});
 	test("serve starts a server on the given port and keeps running", async () => {
 		const data = tmp();
-		expect(await run(["serve", "--data", data, "--port", "0"])).toBeUndefined();
-		expect(existsSync(join(data, "tasuki.db"))).toBe(true);
+		const server = await run(["serve", "--data", data, "--port", "0"]);
+		try {
+			expect(typeof server).toBe("object");
+			expect(existsSync(join(data, "tasuki.db"))).toBe(true);
+		} finally {
+			if (typeof server !== "number") server.stop(true);
+		}
 	});
 	test("healthcheck fails when nothing listens", async () => {
 		expect(await run(["healthcheck", "--port", "1"], undefined, cap().io)).toBe(

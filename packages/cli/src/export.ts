@@ -1,13 +1,16 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
-	type Actor,
+	type Ctx,
 	getIssue,
 	getProject,
+	listIssueTypes,
 	listProjects,
+	listUsers,
 	pageIssues,
+	systemAdminId,
 } from "@tasuki/core";
-import { issueTypes, openDbReadonly, users } from "@tasuki/db";
+import { openDbReadonly } from "@tasuki/db";
 
 type Issue = ReturnType<typeof getIssue>;
 
@@ -16,33 +19,24 @@ type Issue = ReturnType<typeof getIssue>;
  * the first system admin with a read-only token-style identity, so the core read functions
  * work and nothing can be written, approved or completed through this path.
  */
-export function openForExport(data: string) {
+export function openForExport(data: string): Ctx {
 	const file = join(data, "tasuki.db");
 	if (!existsSync(file)) throw new Error(`データベースがありません: ${file}`);
 	const db = openDbReadonly(file);
-	const admin = db
-		.select()
-		.from(users)
-		.all()
-		.find((u) => u.role === "admin");
-	if (!admin)
+	const userId = systemAdminId(db);
+	if (!userId)
 		throw new Error(
 			"システム管理者がいません（まだセットアップされていません）",
 		);
-	const actor: Actor = {
-		userId: admin.id,
-		via: "cli",
-		auth: "token",
-		token: { scopes: ["read"], projectIds: null },
+	return {
+		db,
+		actor: {
+			userId,
+			via: "cli",
+			auth: "token",
+			token: { scopes: ["read"], projectIds: null },
+		},
 	};
-	const names = new Map(
-		db
-			.select()
-			.from(users)
-			.all()
-			.map((u) => [u.id, u.name]),
-	);
-	return { ctx: { db, actor }, names, db };
 }
 
 const q = (s: string) => JSON.stringify(s);
@@ -94,10 +88,7 @@ export function issueMarkdown(
 }
 
 /** Every issue of the selected projects, newest page by page. */
-function* allIssues(
-	ctx: ReturnType<typeof openForExport>["ctx"],
-	keys: string[],
-) {
+function* allIssues(ctx: Ctx, keys: string[]) {
 	for (const key of keys) {
 		let cursor: number | undefined;
 		do {
@@ -114,20 +105,15 @@ export function exportData(o: {
 	out?: string;
 	project?: string;
 }): { files: number; target: string } {
-	const { ctx, names } = openForExport(o.data);
+	const ctx = openForExport(o.data);
+	const names = new Map(listUsers(ctx).map((u) => [u.id, u.name]));
 	const keys = o.project
 		? [getProject(ctx, o.project).key]
 		: listProjects(ctx).map((p) => p.key);
 	const name = (id: string | null) => (id ? (names.get(id) ?? id) : "");
-	const typeNames = new Map(
-		ctx.db
-			.select()
-			.from(issueTypes)
-			.all()
-			.map((t) => [t.id, t.name]),
-	);
-	const typeOf = (id: string | null) => (id ? (typeNames.get(id) ?? "") : "");
 	if (o.format === "md") {
+		const typeNames = new Map(listIssueTypes(ctx).map((t) => [t.id, t.name]));
+		const typeOf = (id: string | null) => (id ? (typeNames.get(id) ?? "") : "");
 		const dir = o.out ?? "./tasuki-export";
 		let files = 0;
 		for (const { key, issue } of allIssues(ctx, keys)) {

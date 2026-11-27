@@ -1,10 +1,10 @@
 import { parseArgs } from "node:util";
-import type { ServeOpts } from "@tasuki/server/start";
+import type { ServeOpts, startServer } from "@tasuki/server/start";
 import pkg from "../../../package.json" with { type: "json" };
 import { agentSetup, mcpAddHint } from "./agent-setup";
 import { backup } from "./backup";
 import { exportData } from "./export";
-import { runRelay } from "./mcp";
+import { insecureRemote, mcpUrl, runRelay } from "./mcp";
 
 export const HELP = `tasuki ${pkg.version} - Redmineに代わる、AIネイティブなチケット管理
 
@@ -14,7 +14,8 @@ export const HELP = `tasuki ${pkg.version} - Redmineに代わる、AIネイテ�
   backup        [--data DIR] [--out FILE]          オンラインのスナップショットを取る
   export        --format md|json [--data DIR] [--out DIR|FILE] [--project KEY]
                                                    全データを書き出す（データDIRへのファイルアクセスが要る。トークンは不要）
-  mcp           --url URL --token TOKEN            stdio→HTTP の MCP 中継（TASUKI_URL / TASUKI_TOKEN も可）
+  mcp           --url URL [--token TOKEN]          stdio→HTTP の MCP 中継。URL はサーバーのURL（/mcp は省略可）。
+                                                   トークンは環境変数 TASUKI_TOKEN で渡す（--token は ps に見える）。TASUKI_URL も可
   agent-setup   [--dir .] [--url URL]              CLAUDE.md と AGENTS.md に作業手順を書く
   healthcheck   [--port N]                         /health を確認する（Docker 用）
 
@@ -34,9 +35,15 @@ const OPTIONS = {
 	version: { type: "boolean", short: "v" },
 } as const;
 
+type Server = ReturnType<typeof startServer>;
+
 export type Embedded = ServeOpts["embedded"];
 
-/** Returns an exit code, or undefined when a long-running command (serve, mcp) took over. */
+/** A valid TCP port from --port / PORT / 3000, or undefined (the caller reports it). */
+const parsePort = (v: string) =>
+	/^\d+$/.test(v) && Number(v) <= 65535 ? Number(v) : undefined;
+
+/** Returns an exit code, or the running server when `serve` took over (the caller must not exit). */
 export async function run(
 	argv: string[],
 	embedded?: Embedded,
@@ -44,7 +51,7 @@ export async function run(
 		out: (s) => console.log(s),
 		err: (s) => console.error(s),
 	},
-): Promise<number | undefined> {
+): Promise<number | Server> {
 	let parsed: ReturnType<
 		typeof parseArgs<{ options: typeof OPTIONS; allowPositionals: true }>
 	>;
@@ -69,17 +76,18 @@ export async function run(
 		return cmd || v.help ? 0 : 2;
 	}
 	const data = v.data ?? process.env.TASUKI_DATA ?? "./tasuki-data";
-	const port = v.port ?? process.env.PORT ?? "3000";
-	if (!/^\d+$/.test(port) || Number(port) > 65535) {
-		io.err(`--port が不正です: ${port}`);
+	const rawPort = v.port ?? process.env.PORT ?? "3000";
+	const port =
+		cmd === "serve" || cmd === "healthcheck" ? parsePort(rawPort) : 0;
+	if (port === undefined) {
+		io.err(`--port が不正です: ${rawPort}`);
 		return 2;
 	}
 	try {
 		switch (cmd) {
 			case "serve": {
 				const { startServer } = await import("@tasuki/server/start");
-				startServer({ data, port: Number(port), embedded });
-				return undefined;
+				return startServer({ data, port, embedded });
 			}
 			case "backup":
 				io.out(`バックアップを作成しました: ${backup(data, v.out)}`);
@@ -109,7 +117,12 @@ export async function run(
 					);
 					return 2;
 				}
-				await runRelay(url, token);
+				const target = mcpUrl(url);
+				if (insecureRemote(target))
+					io.err(
+						"警告: http:// でトークンを平文で送ります。ループバック以外では https:// を使ってください",
+					);
+				await runRelay(target, token);
 				return 0;
 			}
 			case "agent-setup": {

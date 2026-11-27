@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { snapshot } from "@tasuki/db";
 
 /** Online, WAL-safe snapshot of `<data>/tasuki.db`. Safe while the server runs. Returns the file written. */
 export function backup(data: string, out?: string, now = new Date()): string {
@@ -17,7 +18,7 @@ export function backup(data: string, out?: string, now = new Date()): string {
 	const db = new Database(src, { readonly: true });
 	try {
 		db.run("PRAGMA busy_timeout=5000");
-		db.run("VACUUM INTO ?", [file]);
+		snapshot(db, file);
 	} finally {
 		db.close();
 	}

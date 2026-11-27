@@ -4,6 +4,22 @@ import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 
 const noop = () => {};
 
+/** The server base URL or the full `/mcp` URL -> the `/mcp` endpoint (appended only for an empty path). */
+export function mcpUrl(url: string): string {
+	const u = new URL(url);
+	if (u.pathname === "/") u.pathname = "/mcp";
+	return u.href;
+}
+
+/** http: to a non-loopback host: the Bearer token would cross the network in clear text. */
+export function insecureRemote(url: string): boolean {
+	const u = new URL(url);
+	return (
+		u.protocol === "http:" &&
+		!["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)
+	);
+}
+
 /**
  * Forward every JSON-RPC message both ways. `local` faces the agent (stdio), `remote` the
  * server. When a request cannot be delivered, the agent gets a JSON-RPC error instead of
@@ -51,7 +67,8 @@ export async function runRelay(
 	});
 	const done = Promise.withResolvers<void>();
 	relay(local, remote, done.resolve);
-	// the stdio transport does not notice the agent hanging up
+	// the stdio transport does not notice the agent hanging up (@modelcontextprotocol/sdk 1.32.2:
+	// StdioServerTransport only listens for stdin data/error, never "end"), so resolve on it here.
 	if (local instanceof StdioServerTransport)
 		process.stdin.once("end", done.resolve);
 	await remote.start();

@@ -4,7 +4,22 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { openDb, users } from "@tasuki/db";
 import { createMcpServer } from "@tasuki/mcp";
-import { relay, runRelay } from "../src/mcp";
+import { insecureRemote, mcpUrl, relay, runRelay } from "../src/mcp";
+
+describe("mcp url", () => {
+	test("base URL gets /mcp, a full /mcp URL is kept", () => {
+		expect(mcpUrl("https://t.example")).toBe("https://t.example/mcp");
+		expect(mcpUrl("https://t.example/")).toBe("https://t.example/mcp");
+		expect(mcpUrl("https://t.example/mcp")).toBe("https://t.example/mcp");
+		expect(mcpUrl("http://localhost:3000/")).toBe("http://localhost:3000/mcp");
+	});
+	test("http to a non-loopback host is flagged", () => {
+		expect(insecureRemote("http://t.example/mcp")).toBe(true);
+		expect(insecureRemote("https://t.example/mcp")).toBe(false);
+		for (const h of ["localhost", "127.0.0.1", "[::1]"])
+			expect(insecureRemote(`http://${h}:3000/mcp`)).toBe(false);
+	});
+});
 
 describe("mcp relay", () => {
 	test("forwards messages both ways over linked transports", async () => {
