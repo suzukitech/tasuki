@@ -10,9 +10,10 @@ export const ja = {
 	"nav.main": "メインメニュー",
 	"nav.review.count": "確認待ち {n}件",
 	"nav.newProject": "プロジェクトを作る",
-	"board.soon":
-		"ボードは次のバージョンで追加します。いまはリストで状態を変えられます。",
-	"settings.soon": "設定画面は次のバージョンで追加します。",
+	"notfound.title": "ページが見つかりません",
+	"notfound.body":
+		"アドレスが違うか、ページが移動した可能性があります。トップから開き直してください。",
+	"notfound.back": "トップへ戻る",
 	"home.empty":
 		"参加しているプロジェクトがまだありません。下のフォームで最初のプロジェクトを作れます。",
 	"project.new.title": "プロジェクトを作る",
@@ -51,6 +52,7 @@ export const ja = {
 	"list.noMatch":
 		"条件に合うチケットがありません。検索を変えるか、空にして全件を表示してください。",
 	"list.error": "チケットを読み込めませんでした。",
+	"list.retry": "もう一度読み込む",
 	"list.more": "さらに読み込む",
 	"list.loading": "読み込んでいます",
 	"list.search": "検索",
@@ -93,10 +95,24 @@ export const ja = {
 	"turn.others": "他の人の番",
 
 	"toast.conflict": "他の人が先に更新しました。最新の内容を読み込みました",
-	"toast.failed": "変更できませんでした。",
+	"toast.failed": "変更できませんでした。時間をおいてもう一度試してください。",
 	"toast.forbidden":
 		"この操作をする権限がありません。プロジェクトの管理者に頼んでください。",
 	"toast.gate": "この操作は、ブラウザでログインした人だけができます。",
+	"toast.leaveReview":
+		"確認待ちのチケットは、ここからは動かせません。チケットを開いて、承認・差し戻し・完了にしてください。",
+	"toast.noPlan":
+		"計画が承認されていないので、作業中にはできません。計画を提出して承認を受けてください。",
+	"toast.enter.plan_review":
+		"計画確認へは、計画を提出すると進みます。ここへは直接動かせません。",
+	"toast.enter.impl_review":
+		"結果確認へは、結果を提出すると進みます。ここへは直接動かせません。",
+	"toast.enter.any":
+		"確認の状態へは、計画や結果を提出すると進みます。ここへは直接動かせません。",
+	"toast.badMove":
+		"その状態へは直接移せません。チケットを開いて、順番どおりに進めてください。",
+	"toast.notFound":
+		"対象が見つかりませんでした。他の人が消した可能性があります。画面を開き直してください。",
 	"toast.network":
 		"サーバーに届きませんでした。接続を確かめてもう一度試してください。",
 	"toast.close": "閉じる",
@@ -208,6 +224,122 @@ export const ja = {
 	"time.day": "{n}日前",
 	"unknown.user": "不明なユーザー",
 	"ai.actor": "AI",
+
+	"view.switch": "表示",
+	"board.empty": "チケットはありません",
+	"board.count": "{n}件",
+	"board.card.role": "移動できるカード",
+	"move.fail": "移動できませんでした。",
+	"board.partial":
+		"すべてのチケットを読み込んでいます。終わるまでカードは動かせません。",
+	"board.partial.error":
+		"一部のチケットを読み込めませんでした。読み込み直すまでカードは動かせません。",
+	"board.appended":
+		"並べ替えの位置を決められなかったので、列の末尾に置きました。",
+	"board.dnd.help":
+		"スペースキーでカードを持ち上げ、矢印キーで動かし、もう一度スペースキーで置きます。Escで取り消します。Enterで開きます。",
+	"board.dnd.start": "{name}を持ち上げました",
+	"board.dnd.over": "{col}の上にあります",
+	"board.dnd.end": "{name}を{col}に置きました",
+	"board.dnd.cancel": "{name}の移動を取り消しました",
+
+	"palette.title": "コマンド",
+	"palette.open": "コマンド",
+	"palette.placeholder": "移動、作成、チケット番号やことばで検索",
+	"palette.group.go": "移動",
+	"palette.group.make": "作成",
+	"palette.group.issues": "チケット",
+	"palette.group.issue": "このチケット",
+	"palette.create": "チケットを作る",
+	"palette.openRef": "{ref} を開く",
+	"palette.status": "状態を「{name}」にする",
+	"palette.closePanel": "{ref} のパネルを閉じる",
+	"palette.searching": "検索しています",
+	"palette.none": "該当するものがありません。別のことばで試してください。",
+	"palette.count": "{n}件",
+
+	"settings.sections": "設定の種類",
+	"settings.personal": "アクセストークン",
+	"settings.project": "プロジェクト",
+	"settings.fail": "保存できませんでした。",
+	"settings.save": "保存する",
+	"settings.saved": "保存しました",
+	"settings.copy": "コピーする",
+	"settings.copied": "コピーしました",
+	"settings.copy.fail":
+		"コピーできませんでした。欄の文字を選んで手でコピーしてください。",
+	"tokens.title": "アクセストークン",
+	"tokens.lead":
+		"Claude Code などのAIや外部のツールが、あなたの権限でTasukiを使うための鍵です。計画の承認や完了など、人が判断する操作はトークンではできません。",
+	"tokens.new": "トークンを発行する",
+	"tokens.name": "名前",
+	"tokens.name.hint": "どこで使うか分かる名前にします（例: 自分のノートPC）。",
+	"tokens.scope": "できること",
+	"tokens.scope.write": "読み書き（AIにチケットを進めさせる）",
+	"tokens.scope.read": "読み取りだけ",
+	"tokens.scope.write.short": "読み書き",
+	"tokens.scope.read.short": "読み取り",
+	"tokens.project": "使えるプロジェクト",
+	"tokens.project.all": "すべてのプロジェクト",
+	"tokens.expires": "有効期限（空なら無期限）",
+	"tokens.create": "発行する",
+	"tokens.issued.title": "「{name}」を発行しました",
+	"tokens.once":
+		"トークンが見えるのは、いまだけです。この画面を閉じると二度と表示できないので、先にコピーして安全な場所に保存してください。",
+	"tokens.plain": "トークン",
+	"tokens.mcp": "Claude Code に登録するコマンド",
+	"tokens.done": "コピーしたので閉じる",
+	"tokens.list": "発行済みのトークン",
+	"tokens.error":
+		"アクセストークンの一覧を読み込めませんでした。画面を開き直してください。",
+	"tokens.empty": "まだトークンはありません。上のフォームから発行できます。",
+	"tokens.state.revoked": "失効済み",
+	"tokens.state.expired": "期限切れ",
+	"tokens.lastUsed": "最後に使った時刻: {when}",
+	"tokens.neverUsed": "まだ使われていません",
+	"tokens.expiresOn": "期限: {date}",
+	"tokens.revoke": "失効する",
+	"tokens.revoke.ask": "「{name}」を失効しますか。元に戻せません。",
+	"tokens.revoke.yes": "失効する",
+	"tokens.revoked": "失効しました",
+
+	"project.title": "プロジェクトの設定",
+	"project.readonly":
+		"変更できるのはプロジェクトのマネージャーだけです。内容は見られます。",
+	"project.basics": "基本情報",
+	"project.description": "説明",
+	"project.members": "メンバー",
+	"project.member.role": "{name}のロール",
+	"project.member.remove": "{name}を外す",
+	"project.member.remove.ask": "{name}をこのプロジェクトから外しますか。",
+	"project.member.remove.yes": "外す",
+	"project.member.removed": "外しました",
+	"project.member.add": "メールアドレスで追加",
+	"project.member.add.hint":
+		"Tasukiにアカウントがある人だけ追加できます。まだなら下の招待リンクを渡してください。",
+	"project.member.newRole": "追加する人のロール",
+	"project.member.submit": "追加する",
+	"project.member.added": "追加しました",
+	"project.statuses": "状態の名前",
+	"project.statuses.lead":
+		"表示名だけ変えられます。計画確認や完了といった種類と順番は、流れの規則なので変えられません。",
+	"project.status.name": "{category}の状態名",
+	"project.templates.later": "テンプレートの設定は次のバージョンで追加します。",
+	"category.draft": "下書き",
+	"category.ready": "準備完了",
+	"category.plan_review": "計画確認",
+	"category.in_progress": "作業中",
+	"category.impl_review": "結果確認",
+	"category.done": "完了",
+	"role.manager": "マネージャー",
+	"role.member": "メンバー",
+	"role.viewer": "閲覧者",
+	"invite.title": "招待リンク",
+	"invite.lead":
+		"新しい人がアカウントを作るためのリンクです。作成後に、上の「メールアドレスで追加」でこのプロジェクトに加えます。",
+	"invite.create": "招待リンクを発行する",
+	"invite.link": "招待リンク",
+	"invite.expires": "有効期限: {date}（発行から7日間）",
 
 	"key.create": "作成",
 	"key.move": "移動",

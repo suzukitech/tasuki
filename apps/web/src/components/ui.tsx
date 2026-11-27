@@ -222,11 +222,12 @@ export function TurnBadge({ turn }: { turn: Turn | null }) {
 	);
 }
 
-/** 「AIに任せる / 人がやる」: flow = ai (true) or simple (false). */
-export function FlowToggle(p: {
-	value: boolean;
-	onChange: (ai: boolean) => void;
+/** Small two-or-more way switch (aria-pressed buttons). ≥44px tall on touch. */
+export function Segmented<V extends string | boolean>(p: {
+	value: V;
+	onChange: (v: V) => void;
 	label: string;
+	options: readonly { value: V; label: string; icon?: LucideIcon }[];
 	className?: string;
 }) {
 	return (
@@ -237,30 +238,42 @@ export function FlowToggle(p: {
 			)}
 		>
 			<legend className="sr-only">{p.label}</legend>
-			{(
-				[
-					[true, "list.create.ai"],
-					[false, "list.create.human"],
-				] as const
-			).map(([v, k]) => (
+			{p.options.map((o) => (
 				<button
-					key={k}
+					key={String(o.value)}
 					type="button"
-					aria-pressed={p.value === v}
-					onClick={() => p.onChange(v)}
+					aria-pressed={p.value === o.value}
+					onClick={() => p.onChange(o.value)}
 					className={cx(
-						"rounded-[5px] px-2.5 text-xs leading-6 whitespace-nowrap pointer-coarse:min-h-10",
-						p.value === v
+						"inline-flex items-center gap-1.5 rounded-[5px] px-2.5 text-xs leading-6 whitespace-nowrap pointer-coarse:min-h-11",
+						p.value === o.value
 							? "bg-surface font-medium text-ink shadow-[0_0_0_1px_var(--line-strong)]"
 							: "text-nezumi hover:text-ink",
 					)}
 				>
-					{t(k)}
+					{o.icon && <o.icon {...iconProps} />}
+					{o.label}
 				</button>
 			))}
 		</fieldset>
 	);
 }
+
+/** 「AIに任せる / 人がやる」: flow = ai (true) or simple (false). */
+export const FlowToggle = (p: {
+	value: boolean;
+	onChange: (ai: boolean) => void;
+	label: string;
+	className?: string;
+}) => (
+	<Segmented
+		{...p}
+		options={[
+			{ value: true, label: t("list.create.ai") },
+			{ value: false, label: t("list.create.human") },
+		]}
+	/>
+);
 
 export function EmptyState({
 	icon: Icon,
@@ -538,7 +551,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
 			<div
 				role="status"
 				aria-live="polite"
-				className="pointer-events-none fixed bottom-4 left-4 z-50 flex max-w-[calc(100vw-2rem)] flex-col gap-2"
+				className="pointer-events-none fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-4 z-50 flex max-w-[calc(100vw-2rem)] flex-col gap-2 md:left-[calc(14rem+1rem)]"
 			>
 				{items.map((i) => (
 					<ToastItem

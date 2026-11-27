@@ -4,10 +4,12 @@ import {
 	type Actor,
 	acceptInvite,
 	addComment,
+	addMember,
 	answerQuestion,
 	approvePlan,
 	bulkUpdate,
 	type Ctx,
+	changeMemberRole,
 	completeIssue,
 	createApiToken,
 	createInvite,
@@ -31,6 +33,8 @@ import {
 	parseEtag,
 	projectDetail,
 	rejectPlan,
+	removeMember,
+	renameStatus,
 	resolveSession,
 	resolveToken,
 	returnReport,
@@ -366,6 +370,33 @@ export function createApp(
 	);
 	api.patch("/projects/:key", async (c) =>
 		c.json(updateProject(ctxOf(c), c.req.param("key"), await json(c))),
+	);
+	api.post("/projects/:key/members", async (c) =>
+		c.json(addMember(ctxOf(c), c.req.param("key"), await json(c)), 201),
+	);
+	api.patch("/projects/:key/members/:userId", async (c) =>
+		c.json(
+			changeMemberRole(
+				ctxOf(c),
+				c.req.param("key"),
+				c.req.param("userId"),
+				await json(c),
+			),
+		),
+	);
+	api.delete("/projects/:key/members/:userId", (c) => {
+		removeMember(ctxOf(c), c.req.param("key"), c.req.param("userId"));
+		return c.body(null, 204);
+	});
+	api.patch("/projects/:key/statuses/:id", async (c) =>
+		c.json(
+			renameStatus(
+				ctxOf(c),
+				c.req.param("key"),
+				c.req.param("id"),
+				await json(c),
+			),
+		),
 	);
 	api.get("/projects/:key/issues", (c) => {
 		const q = parse(listQuery, c.req.query());

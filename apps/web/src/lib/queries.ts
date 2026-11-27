@@ -12,7 +12,7 @@ import { useToast } from "../components/ui";
 import { t } from "../i18n";
 import { api } from "./api";
 import { mapPages, type Patch, projectOf } from "./cache";
-import { etagOf, writeError } from "./etag";
+import { etagOf, type WriteContext, writeError } from "./etag";
 import { turnOf } from "./turn";
 import type {
 	IssueDetail,
@@ -22,6 +22,8 @@ import type {
 	Project,
 	ProjectDetail,
 } from "./types";
+
+type EditRow = Pick<IssueRow, "ref" | "updatedAt">;
 
 export const useMe = () =>
 	useQuery({
@@ -37,24 +39,28 @@ export const useProjects = () =>
 export const useProject = (key: string) =>
 	useQuery({
 		queryKey: ["project", key.toUpperCase()],
-		queryFn: () => api<ProjectDetail>("GET", `/projects/${key}`),
+		queryFn: () =>
+			api<ProjectDetail>("GET", `/projects/${encodeURIComponent(key)}`),
 		enabled: !!key,
 	});
 
 export const issueQuery = (ref: string) => ({
 	queryKey: ["issue", ref],
-	queryFn: () => api<IssueDetail>("GET", `/issues/${ref}`),
+	queryFn: () => api<IssueDetail>("GET", `/issues/${encodeURIComponent(ref)}`),
 });
 export const useIssue = (ref: string) => useQuery(issueQuery(ref));
 
-export function useIssues(key: string, q: string) {
+export function useIssues(key: string, q: string, limit = 50) {
 	return useInfiniteQuery({
-		queryKey: ["issues", key.toUpperCase(), q],
+		queryKey: ["issues", key.toUpperCase(), q, limit],
 		initialPageParam: undefined as number | undefined,
 		queryFn: ({ pageParam }) => {
-			const p = new URLSearchParams({ q, limit: "50" });
+			const p = new URLSearchParams({ q, limit: String(limit) });
 			if (pageParam) p.set("cursor", String(pageParam));
-			return api<Page>("GET", `/projects/${key}/issues?${p}`);
+			return api<Page>(
+				"GET",
+				`/projects/${encodeURIComponent(key)}/issues?${p}`,
+			);
 		},
 		getNextPageParam: (last) => last.nextCursor ?? undefined,
 		enabled: !!key,
@@ -77,7 +83,10 @@ export function useReviewQueue(key: string, project?: ProjectDetail, me?: Me) {
 		queries: REVIEW_QUERIES.map((s) => ({
 			queryKey: ["review", key.toUpperCase(), s],
 			queryFn: () =>
-				api<Page>("GET", `/projects/${key}/issues?q=${s}&limit=200`),
+				api<Page>(
+					"GET",
+					`/projects/${encodeURIComponent(key)}/issues?q=${s}&limit=200`,
+				),
 			enabled: !!key,
 		})),
 	});
@@ -114,25 +123,28 @@ export function refreshIssue(qc: QueryClient, ref: string) {
 export function useWriteFailure() {
 	const toast = useToast();
 	const qc = useQueryClient();
-	return (e: unknown) => {
-		const w = writeError(e);
-		toast(w.detail ? `${t(w.key)}${w.detail}` : t(w.key));
+	return (e: unknown, ctx?: WriteContext) => {
+		const w = writeError(e, ctx);
+		toast(w.text);
 		if (w.conflict)
 			for (const k of ["issue", "issues", "review"])
 				qc.invalidateQueries({ queryKey: [k] });
 	};
 }
 
-/** Inline edit from the list: optimistic, rolled back on error, If-Match for field edits. */
+/** Inline edit from the list or board: optimistic, rolled back on error, If-Match for field edits. */
 export function useInlineEdit(key: string) {
 	const qc = useQueryClient();
 	const fail = useWriteFailure();
 	const root = ["issues", key.toUpperCase()];
 	return useMutation({
-		mutationFn: ({ row, patch }: { row: IssueRow; patch: Patch }) =>
+		mutationFn: ({ row, patch }: { row: EditRow; patch: Patch }) =>
 			patch.statusId
-				? api("POST", `/issues/${row.ref}/move`, { statusId: patch.statusId })
-				: api("PATCH", `/issues/${row.ref}`, patch, {
+				? api("POST", `/issues/${encodeURIComponent(row.ref)}/move`, {
+						statusId: patch.statusId,
+						rank: patch.rank,
+					})
+				: api("PATCH", `/issues/${encodeURIComponent(row.ref)}`, patch, {
 						"if-match": etagOf(row.updatedAt),
 					}),
 		onMutate: async ({ row, patch }) => {
@@ -141,9 +153,13 @@ export function useInlineEdit(key: string) {
 			qc.setQueriesData({ queryKey: root }, (d) => mapPages(d, row.ref, patch));
 			return snap;
 		},
-		onError: (e, _v, snap) => {
+		onError: (e, { patch }, snap) => {
 			for (const [k, d] of snap ?? []) qc.setQueryData(k, d);
-			fail(e);
+			if (!patch.statusId) return fail(e);
+			const to = qc
+				.getQueryData<ProjectDetail>(["project", key.toUpperCase()])
+				?.statuses.find((s) => s.id === patch.statusId)?.category;
+			fail(e, { prefix: t("move.fail"), to });
 		},
 		onSettled: (_d, _e, { row }) => refreshIssue(qc, row.ref),
 	});
@@ -157,7 +173,19 @@ export function useLiveUpdates(enabled: boolean) {
 		const es = new EventSource("/api/v1/events");
 		const on = (ev: MessageEvent) => {
 			try {
-				const { ref } = JSON.parse(ev.data) as { ref?: string };
+				const { type, ref } = JSON.parse(ev.data) as {
+					type?: string;
+					ref?: string;
+				};
+				// project-level event: its ref is the project key
+				if (type === "project.updated" && ref)
+					return void Promise.all(
+						["project", "projects", "issue", "issues"].map((k) =>
+							qc.invalidateQueries({
+								queryKey: k === "project" ? [k, ref.toUpperCase()] : [k],
+							}),
+						),
+					);
 				if (ref) return void refreshIssue(qc, ref);
 			} catch {}
 			qc.invalidateQueries();

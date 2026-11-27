@@ -184,6 +184,7 @@ kbd {
 	}
 }
 
-input[type="checkbox"] {
+input[type="checkbox"],
+input[type="radio"] {
 	accent-color: var(--indigo);
 }

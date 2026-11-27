@@ -2,7 +2,12 @@
 // The browser talks to Vite, so the server must accept its origin (CSRF Origin check).
 process.env.TASUKI_BASE_URL ??= "http://localhost:5173";
 const run = (cmd: string[], cwd?: string) =>
-	Bun.spawn(cmd, { cwd, stdio: ["inherit", "inherit", "inherit"] });
+	// env must be explicit: Bun.spawn's default env ignores runtime process.env writes.
+	Bun.spawn(cmd, {
+		cwd,
+		env: process.env,
+		stdio: ["inherit", "inherit", "inherit"],
+	});
 const procs = [
 	run(["bun", "--watch", "apps/server/src/index.ts"]),
 	run(["bunx", "--bun", "vite"], "apps/web"),

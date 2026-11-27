@@ -28,6 +28,7 @@ export const EVENT_TYPES = [
 	"report.returned",
 	"question.asked",
 	"question.answered",
+	"project.updated",
 ] as const;
 export type EventType = (typeof EVENT_TYPES)[number];
 
@@ -105,3 +106,11 @@ export function whoseTurn(
 			return null;
 	}
 }
+
+/** Project key (`WEB`) and issue ref (`WEB-12`): the only shapes allowed into API paths and `?issue=`. */
+export const KEY_RE = /^[A-Z]{2,10}$/;
+export const REF_RE = /^[A-Z]{2,10}-[1-9]\d*$/;
+export const isProjectKey = (s: unknown): s is string =>
+	typeof s === "string" && KEY_RE.test(s);
+export const isIssueRef = (s: unknown): s is string =>
+	typeof s === "string" && REF_RE.test(s);

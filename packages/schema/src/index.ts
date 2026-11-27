@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { PRIORITY_MAX } from "./pure";
+import { KEY_RE, PRIORITY_MAX } from "./pure";
 
 export * from "./pure";
 
@@ -8,7 +8,7 @@ export const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 const date = z.string().regex(DATE_RE);
 
 export const createProjectInput = z.object({
-	key: z.string().regex(/^[A-Z]{2,10}$/),
+	key: z.string().regex(KEY_RE),
 	name: z.string().trim().min(1).max(100),
 	description: md().default(""),
 });
@@ -16,6 +16,16 @@ export const createProjectInput = z.object({
 export const updateProjectInput = z
 	.object({ name: createProjectInput.shape.name, description: md() })
 	.partial();
+
+const memberRole = z.enum(["manager", "member", "viewer"]);
+export const addMemberInput = z.object({
+	email: z.string().trim().toLowerCase().pipe(z.email()),
+	role: memberRole,
+});
+export const memberRoleInput = z.object({ role: memberRole });
+export const statusRenameInput = z.object({
+	name: z.string().trim().min(1).max(50),
+});
 
 const title = z.string().trim().min(1).max(200);
 const bodyMd = md(50000);

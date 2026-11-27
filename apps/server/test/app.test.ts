@@ -644,3 +644,37 @@ describe("SSE", () => {
 		expect((await harness().call("GET", "/events")).status).toBe(401);
 	});
 });
+
+describe("members and statuses", () => {
+	test("manager manages members and renames statuses over REST", async () => {
+		const h = harness();
+		const admin = await h.setup();
+		const bob = await h.addUser(admin, "bob");
+		await admin.req("POST", "/projects", key("OPS"));
+		const add = await admin.req("POST", "/projects/OPS/members", {
+			email: "bob@example.com",
+			role: "viewer",
+		});
+		expect(add.status).toBe(201);
+		const patch = await admin.req("PATCH", `/projects/OPS/members/${bob.id}`, {
+			role: "member",
+		});
+		expect(await patch.json()).toEqual({ userId: bob.id, role: "member" });
+		// a plain member cannot manage members
+		expect(
+			(await bob.req("DELETE", `/projects/OPS/members/${bob.id}`)).status,
+		).toBe(403);
+		expect(
+			(await admin.req("DELETE", `/projects/OPS/members/${bob.id}`)).status,
+		).toBe(204);
+		const detail = await (await admin.req("GET", "/projects/OPS")).json();
+		const r = await admin.req(
+			"PATCH",
+			`/projects/OPS/statuses/${detail.statuses[0].id}`,
+			{
+				name: "Inbox",
+			},
+		);
+		expect((await r.json()).name).toBe("Inbox");
+	});
+});

@@ -1,6 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { CircleCheck, FilePlus2, Plus, Search, SearchX } from "lucide-react";
+import {
+	CircleCheck,
+	Columns3,
+	FilePlus2,
+	List,
+	Plus,
+	Search,
+	SearchX,
+} from "lucide-react";
 import {
 	type KeyboardEvent,
 	useCallback,
@@ -26,6 +34,7 @@ import {
 import { buildCreate, previewQuick } from "../lib/quick";
 import { turnOf } from "../lib/turn";
 import type { IssueRow, Me, ProjectDetail } from "../lib/types";
+import { Board } from "./Board";
 import { IssuePanel } from "./Panel";
 import {
 	Avatar,
@@ -41,12 +50,18 @@ import {
 	NoAvatar,
 	PriorityGlyph,
 	priorityOptions,
+	Segmented,
 	Skeleton,
 	StatusDot,
 	TurnBadge,
+	useToast,
 } from "./ui";
 
-export type ListSearch = { issue?: string; q?: string; view?: "review" };
+export type ListSearch = {
+	issue?: string;
+	q?: string;
+	view?: "review" | "board";
+};
 
 type Col = "status" | "assignee" | "priority";
 const COLS = [
@@ -253,14 +268,37 @@ export function ProjectView({
 	const project = useProject(projectKey).data;
 	const q = search.q ?? "";
 	const review = search.view === "review";
-	const list = useIssues(projectKey, q);
+	const board = search.view === "board";
+	// the board needs whole columns: ask for big pages (the server's maximum is 200)
+	const list = useIssues(projectKey, q, board ? 200 : 50);
 	const queue = useReviewQueue(projectKey, project, me);
+	const toast = useToast();
 	const edit = useInlineEdit(projectKey);
+	const dragging = useRef(false);
 	const rows = useMemo(
 		() =>
 			review ? queue.items : (list.data?.pages.flatMap((p) => p.items) ?? []),
 		[review, queue.items, list.data],
 	);
+	// the board shows whole columns: keep loading until the list is complete
+	// (stop on an error: retrying in a loop would hammer a failing server)
+	const {
+		hasNextPage,
+		isFetchingNextPage,
+		fetchNextPage,
+		isFetchNextPageError,
+	} = list;
+	useEffect(() => {
+		if (board && hasNextPage && !isFetchingNextPage && !isFetchNextPageError)
+			fetchNextPage();
+	}, [
+		board,
+		hasNextPage,
+		isFetchingNextPage,
+		isFetchNextPageError,
+		fetchNextPage,
+	]);
+	const partial = board && (hasNextPage || isFetchingNextPage);
 	const [sel, setSel] = useState(-1);
 	const [ai, setAi] = useState(true);
 	const [draft, setDraft] = useState("");
@@ -288,17 +326,19 @@ export function ProjectView({
 				target: e.target as HTMLElement | null,
 			});
 			if (!a) return;
+			if (board && (a === "next" || a === "prev" || a === "open")) return;
 			e.preventDefault();
 			if (a === "create") createRef.current?.focus();
 			else if (a === "search") searchRef.current?.focus();
 			else if (a === "next") setSel((i) => Math.min(i + 1, rows.length - 1));
 			else if (a === "prev") setSel((i) => Math.max(i - 1, 0));
 			else if (a === "open") rows[sel] && go({ issue: rows[sel].ref });
-			else if (a === "close" && search.issue) go({ issue: undefined });
+			else if (a === "close" && search.issue && !dragging.current)
+				go({ issue: undefined });
 		};
 		window.addEventListener("keydown", onKey);
 		return () => window.removeEventListener("keydown", onKey);
-	}, [rows, sel, search.issue, go]);
+	}, [rows, sel, search.issue, go, board]);
 
 	const creating = useRef(false);
 	const onCreate = async (e: KeyboardEvent<HTMLInputElement>) => {
@@ -311,7 +351,11 @@ export function ProjectView({
 		const sent = draft;
 		setDraft(""); // cleared before the await; restored on failure
 		try {
-			await api("POST", `/projects/${projectKey}/issues`, body);
+			await api(
+				"POST",
+				`/projects/${encodeURIComponent(projectKey)}/issues`,
+				body,
+			);
 			qc.invalidateQueries({ queryKey: ["issues", projectKey] });
 		} catch (x) {
 			setDraft((now) => now || sent);
@@ -320,6 +364,7 @@ export function ProjectView({
 			creating.current = false;
 		}
 	};
+	const onOpen = useCallback((ref: string) => go({ issue: ref }), [go]);
 	const onSearch = (e: KeyboardEvent<HTMLInputElement>) => {
 		if (e.key === "Escape") e.currentTarget.blur();
 		if (e.key === "Enter" && !e.nativeEvent.isComposing)
@@ -361,6 +406,17 @@ export function ProjectView({
 								</>
 							)}
 						</h1>
+						{!review && (
+							<Segmented
+								value={board}
+								onChange={(b) => go({ view: b ? "board" : undefined })}
+								label={t("view.switch")}
+								options={[
+									{ value: false, label: t("nav.list"), icon: List },
+									{ value: true, label: t("nav.board"), icon: Columns3 },
+								]}
+							/>
+						)}
 						{!review && (
 							<div className="relative w-72 max-md:w-full">
 								<Search
@@ -416,6 +472,7 @@ export function ProjectView({
 							<Plus {...iconProps} className="shrink-0 text-nezumi" />
 							<input
 								ref={createRef}
+								data-quick-create
 								aria-label={t("list.create.placeholder")}
 								placeholder={t("list.create.placeholder")}
 								value={draft}
@@ -452,7 +509,15 @@ export function ProjectView({
 						)}
 					</div>
 				</div>
-				<div className="@container min-h-0 flex-1 overflow-auto px-5 pb-6 max-md:px-3">
+				<div
+					className={cx(
+						"@container relative min-h-0 flex-1 px-5 max-md:px-3",
+						// the board scrolls sideways inside this frame only; the page never does
+						board && !loading && rows.length > 0
+							? "overflow-x-auto overflow-y-hidden pb-4"
+							: "overflow-auto pb-6",
+					)}
+				>
 					{loading ? (
 						<SkeletonRows />
 					) : error && rows.length === 0 ? (
@@ -498,6 +563,44 @@ export function ProjectView({
 								{t("list.empty")}
 							</EmptyState>
 						)
+					) : board ? (
+						<div className="flex h-full flex-col gap-2">
+							{partial && (
+								<p
+									role={isFetchNextPageError ? "alert" : "status"}
+									className={cx(
+										"flex flex-wrap items-center gap-2 text-xs",
+										isFetchNextPageError ? "text-sash" : "text-nezumi",
+									)}
+								>
+									{isFetchNextPageError
+										? t("board.partial.error")
+										: t("board.partial")}
+									{isFetchNextPageError && (
+										<Button onClick={() => fetchNextPage()}>
+											{t("list.retry")}
+										</Button>
+									)}
+								</p>
+							)}
+							<div className="min-h-0 flex-1">
+								<Board
+									project={project}
+									me={me}
+									rows={rows}
+									openRef={search.issue}
+									onOpen={onOpen}
+									locked={partial}
+									onDragging={(on) => {
+										dragging.current = on;
+									}}
+									onMove={(row, { appended, ...patch }) => {
+										edit.mutate({ row, patch });
+										if (appended) toast(t("board.appended"), "info");
+									}}
+								/>
+							</div>
+						</div>
 					) : (
 						<table className="w-full border-collapse text-sm max-md:block">
 							<thead className="max-md:hidden">
@@ -538,7 +641,7 @@ export function ProjectView({
 					{review && queue.truncated && (
 						<p className="mt-3 text-xs text-nezumi">{t("review.truncated")}</p>
 					)}
-					{!review && list.hasNextPage && (
+					{!review && !board && list.hasNextPage && (
 						<Button
 							className="mt-3"
 							onClick={() => list.fetchNextPage()}
@@ -547,7 +650,12 @@ export function ProjectView({
 							{t("list.more")}
 						</Button>
 					)}
-					<p className="mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-nezumi max-md:hidden pointer-coarse:hidden">
+					<p
+						className={cx(
+							"mt-6 flex flex-wrap gap-x-4 gap-y-1 text-xs text-nezumi max-md:hidden pointer-coarse:hidden",
+							board && "hidden",
+						)}
+					>
 						{(
 							[
 								[["C"], "key.create"],
