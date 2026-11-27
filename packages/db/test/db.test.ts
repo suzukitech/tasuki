@@ -1,8 +1,13 @@
+import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq, sql } from "drizzle-orm";
 import {
 	agentSessions,
 	type Db,
+	embeddedMigrations,
 	issues,
 	openDb,
 	searchIssueIds,
@@ -176,5 +181,63 @@ describe("review fixes", () => {
 			.where(eq(agentSessions.id, first.id))
 			.run();
 		expect(() => db.insert(agentSessions).values(open).run()).not.toThrow();
+	});
+});
+
+describe("migrations", () => {
+	const dir = () => mkdtempSync(join(tmpdir(), "tasuki-db-"));
+	const journal = {
+		entries: [
+			{ tag: "0000_a", when: 1000, breakpoints: true },
+			{ tag: "0001_b", when: 2000, breakpoints: true },
+		],
+	};
+	const sqlByTag = {
+		"0000_a": "CREATE TABLE a (x int);",
+		"0001_b":
+			"CREATE TABLE b (x int);--> statement-breakpoint\nCREATE TABLE c (x int);",
+	};
+
+	test("embeddedMigrations splits statements and hashes the text", () => {
+		const m = embeddedMigrations(journal, sqlByTag);
+		expect(m[1]?.sql).toHaveLength(2);
+		expect(m[0]?.folderMillis).toBe(1000);
+		expect(m[0]?.hash).toMatch(/^[0-9a-f]{64}$/);
+		expect(() => embeddedMigrations(journal, {})).toThrow("0000_a");
+	});
+
+	test("snapshot before pending migrations only on an already-migrated db", () => {
+		const d = dir();
+		const path = join(d, "t.db");
+		const backups = join(d, "backups");
+		const all = embeddedMigrations(journal, sqlByTag);
+		// fresh db: nothing to protect
+		openDb(path, {
+			migrations: all.slice(0, 1),
+			backupDir: backups,
+		}).$client.close();
+		expect(existsSync(backups)).toBe(false);
+		// up to date: no backup
+		openDb(path, {
+			migrations: all.slice(0, 1),
+			backupDir: backups,
+		}).$client.close();
+		expect(existsSync(backups)).toBe(false);
+		// one pending migration: snapshot taken from the pre-migration state
+		openDb(path, { migrations: all, backupDir: backups }).$client.close();
+		const files = readdirSync(backups);
+		expect(files).toHaveLength(1);
+		const snap = new Database(join(backups, files[0] as string), {
+			readonly: true,
+		});
+		const tables = snap
+			.query<{ name: string }, []>(
+				"SELECT name FROM sqlite_master WHERE type='table'",
+			)
+			.all()
+			.map((t) => t.name);
+		expect(tables).toContain("a");
+		expect(tables).not.toContain("b");
+		snap.close();
 	});
 });

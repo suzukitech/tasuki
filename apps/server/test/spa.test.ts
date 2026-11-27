@@ -53,4 +53,22 @@ describe("SPA serving", () => {
 		expect((await mk().request("/")).status).toBe(404);
 		expect((await mk(join(dir, "missing")).request("/p/WEB")).status).toBe(404);
 	});
+
+	test("embedded assets (compiled binary) serve the same way, only listed paths", async () => {
+		const app = createApp(openDb(":memory:"), {
+			baseUrl: "http://localhost:3000",
+			webAssets: {
+				"/index.html": join(dir, "index.html"),
+				"/assets/a.js": join(dir, "assets", "a.js"),
+			},
+		});
+		const a = await app.request("/assets/a.js");
+		expect(await a.text()).toBe("console.log(1)");
+		expect(a.headers.get("cache-control")).toContain("immutable");
+		expect(await (await app.request("/p/WEB")).text()).toContain(
+			"<title>spa</title>",
+		);
+		expect((await app.request("/assets/b.js")).status).toBe(404);
+		expect((await app.request("/..%2fpackage.json")).status).toBe(404);
+	});
 });
