@@ -77,7 +77,13 @@ describe("turn badge", () => {
 		flow: "ai",
 		updatedAt: "2026-01-01T00:00:00.000Z",
 		labels: [],
+		openQuestions: 0,
 		...o,
+	});
+	test("open question: reviewer's turn, never AI", () => {
+		const q = { assigneeId: "x", openQuestions: 1 };
+		expect(turnOf(row("s2", q), statuses, "a")).toBe("you");
+		expect(turnOf(row("s2", q), statuses, "x")).toBe("others");
 	});
 	test("approver, AI, others, done, unknown", () => {
 		expect(turnOf(row("s1"), statuses, "a")).toBe("you");

@@ -11,7 +11,7 @@ export const TURN_KEY: Record<Turn, Key> = {
 
 /** Badge for a list row. null when nobody's turn (done) or the status is unknown. */
 export function turnOf(
-	issue: IssueCore,
+	issue: IssueCore & { openQuestions?: number },
 	statuses: Status[],
 	userId: string,
 ): Turn | null {

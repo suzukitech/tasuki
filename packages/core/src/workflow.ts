@@ -488,6 +488,7 @@ export function askQuestion(ctx: Ctx, ref: string, bodyMd: string) {
 			.values({
 				issueId: l.issue.id,
 				askedBy: c.actor.userId,
+				via: c.actor.via,
 				bodyMd: body,
 				createdAt: nowOf(c),
 			})

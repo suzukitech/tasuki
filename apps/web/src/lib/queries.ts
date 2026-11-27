@@ -61,7 +61,12 @@ export function useIssues(key: string, q: string) {
 	});
 }
 
-const REVIEW_CATEGORIES = ["plan_review", "impl_review"] as const;
+// plan / report reviews, plus any issue with an unanswered question
+const REVIEW_QUERIES = [
+	"status:plan_review",
+	"status:impl_review",
+	"question:open",
+] as const;
 
 /**
  * Issues waiting on this user: plan / report reviews where it is their turn.
@@ -69,10 +74,10 @@ const REVIEW_CATEGORIES = ["plan_review", "impl_review"] as const;
  */
 export function useReviewQueue(key: string, project?: ProjectDetail, me?: Me) {
 	const res = useQueries({
-		queries: REVIEW_CATEGORIES.map((s) => ({
+		queries: REVIEW_QUERIES.map((s) => ({
 			queryKey: ["review", key.toUpperCase(), s],
 			queryFn: () =>
-				api<Page>("GET", `/projects/${key}/issues?q=status:${s}&limit=200`),
+				api<Page>("GET", `/projects/${key}/issues?q=${s}&limit=200`),
 			enabled: !!key,
 		})),
 	});
@@ -80,6 +85,7 @@ export function useReviewQueue(key: string, project?: ProjectDetail, me?: Me) {
 		project && me
 			? res
 					.flatMap((r) => r.data?.items ?? [])
+					.filter((i, n, all) => all.findIndex((x) => x.id === i.id) === n) // an issue can match two queries
 					.filter((i) => turnOf(i, project.statuses, me.id) === "you")
 					.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt)) // longest waiting first
 			: [];

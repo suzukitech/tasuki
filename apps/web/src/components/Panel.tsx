@@ -111,7 +111,7 @@ function Who({
 	project,
 }: {
 	id: string | null;
-	via: string;
+	via: string | null;
 	project: ProjectDetail;
 }) {
 	const name = nameOf(id, project);
@@ -119,7 +119,7 @@ function Who({
 		<span className="inline-flex items-center gap-2">
 			<Avatar id={id ?? "?"} name={name} size={20} />
 			<span className="font-medium text-ink">{name}</span>
-			{via !== "web" && (
+			{via && via !== "web" && (
 				<span className="rounded-chip bg-paper px-1.5 text-xs leading-5 text-asagi">
 					{viaLabel(via)}
 				</span>
@@ -619,6 +619,7 @@ type Entry =
 			at: string;
 			id: string;
 			who: string | null;
+			via: string | null;
 			q: string;
 			a: string;
 	  }
@@ -647,6 +648,7 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 					at: q.createdAt,
 					id: q.id,
 					who: q.askedBy,
+					via: q.via,
 					q: q.bodyMd,
 					a: q.answerMd ?? "",
 				}),
@@ -663,7 +665,7 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 					className="mb-5 rounded-panel border border-sash/30 bg-sash-tint p-3"
 				>
 					<div className="mb-1.5 flex flex-wrap items-center gap-2">
-						<Who id={q.askedBy} via="mcp:AI" project={project} />
+						<Who id={q.askedBy} via={q.via} project={project} />
 						<span className="rounded-chip border border-sash/40 px-1.5 text-xs leading-5 font-medium text-sash">
 							{t("thread.question.open")}
 						</span>
@@ -709,11 +711,7 @@ function ThreadTab({ d, project }: { d: IssueDetail; project: ProjectDetail }) {
 					) : (
 						<li key={e.id}>
 							<div className="mb-1 flex items-center gap-2">
-								<Who
-									id={e.who}
-									via={e.k === "comment" ? e.via : "mcp:ai"}
-									project={project}
-								/>
+								<Who id={e.who} via={e.via} project={project} />
 								<span className="ml-auto">
 									<Time at={e.at} />
 								</span>
@@ -864,7 +862,13 @@ export function IssuePanel(p: {
 								{status && <StatusDot category={status.category} />}
 								{d.statusName}
 							</span>
-							<TurnBadge turn={turnOf(d.issue, p.project.statuses, p.me.id)} />
+							<TurnBadge
+								turn={turnOf(
+									{ ...d.issue, openQuestions: d.openQuestions },
+									p.project.statuses,
+									p.me.id,
+								)}
+							/>
 							{d.labels.map((l) => (
 								<Chip key={l}>{l}</Chip>
 							))}

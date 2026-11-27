@@ -113,7 +113,7 @@ flowchart LR
 - どのチケットにも「あなたの番」「AIの番」「他の人の番」のバッジを出す。自分の番になったら通知する。
 - 小さなチケットは計画確認を省略できる（チケットごとの「計画確認なし」チェックと、種別ごとの既定値）。結果確認は省略できない。
 - 承認後に受け入れ条件を変えると、どの状態でも計画の承認は取り消される。作業中・結果確認なら、同じ計画が「提出済み」に戻って計画確認に戻り、承認者が新しい条件で見直す（結果確認からの場合、提出済みのレポートは差し戻し扱いになる）。それ以外の状態（着手前など）では計画は「破棄」になり、新しい計画を出し直す。
-- AIが詰まったら質問を投稿して「質問中」になる。回答されると担当者に通知が届き、AIが再開できる。
+- AIが詰まったら質問を投稿して「質問中」になる。未回答の質問があるあいだは、状態にかかわらず（完了を除く）人間の番で、承認者（なければ依頼者）が「あなたの番」、他の人は「他の人の番」になる（「AIの番」にはならない）。レビューキューにも載る。回答されると担当者に通知が届き、AIが再開できる。質問には投稿元（`via`）を記録し、会話タブの経由タグはその値から出す（Webは出さない。`via` を持たない過去の質問もタグなし）。
 - 状態の名前は変えられるが、流れは固定。Redmineのような自由なワークフロー編集は作らない。
 
 ## チケットの構造
@@ -252,7 +252,7 @@ tasuki/
 | plans                | id, issue\_id, version, understanding\_md, steps\_md, risks\_md, state(proposed/approved/rejected/superseded), reviewed\_by, review\_note | 計画は版を重ねる。差し戻すと次の版が出る。新しい版が出た古い版は superseded                                                                            |
 | plan\_criteria       | plan\_id, criterion\_id, step\_ref                                                                                                        | どの手順でどの条件を満たすか                                                                                                                           |
 | reports              | id, issue\_id, plan\_id, summary\_md, decisions\_md, deviations\_md, tests\_md, pr\_url, branch, state(submitted/accepted/returned)       | 実装レポート                                                                                                                                           |
-| questions            | id, issue\_id, asked\_by, body\_md, answer\_md, answered\_by, state                                                                       | AI→人間の質問。未回答があると「質問中」                                                                                                                |
+| questions            | id, issue\_id, asked\_by, body\_md, answer\_md, answered\_by, via, state                                                                  | AI→人間の質問。未回答があると「質問中」                                                                                                                |
 | agent\_sessions      | id, issue\_id, user\_id, client, started\_at, expires\_at, ended\_at, outcome                                                             | どのAIがいつ作業したか。ended\_atがnullの行はチケットごとに1つだけ（部分ユニーク索引）で、作業ロックを兼ねる。expires\_atは30分でMCP呼び出しごとに延長 |
 | issue\_templates     | id, project\_id, type\_id, body\_template\_md, criteria\_template                                                                         | 種別ごとの書き方の型                                                                                                                                   |
 
@@ -288,7 +288,7 @@ v0.1の合格ラインは2つです。この2つに直接効かない機能は�
 status:open assignee:me label:bug priority:>=high due:<2026-12-31 "ログイン"
 ```
 
-値に空白を含めるときは `status:"In Progress"` のように引用符で囲みます。未知のキー（`foo:bar`）は絞り込みではなく、そのまま検索語として扱います。既知のキーに不正な値を渡すとエラーです。
+`question:open` は未回答の質問があるチケットに絞る。値に空白を含めるときは `status:"In Progress"` のように引用符で囲みます。未知のキー（`foo:bar`）は絞り込みではなく、そのまま検索語として扱います。既知のキーに不正な値を渡すとエラーです。
 
 **v0.2に回すもの**: 依頼フォーム、流れの見える化、Redmineインポート、マイルストーン、保存ビュー、依頼の分解（`create_tasks`）、ブラウザ通知とTeams、メール通知、英語UIとダークモード。流れの見える化はv0.1の変更履歴から計算できるので、後から足しても過去の分まで見られます。
 

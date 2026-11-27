@@ -301,6 +301,12 @@ export function getIssue(ctx: Ctx, ref: string) {
 	const l = loadIssue(ctx, ref);
 	const id = l.issue.id;
 	const q = ctx.db.query;
+	const qs = q.questions
+		.findMany({
+			where: eq(questions.issueId, id),
+			orderBy: asc(questions.createdAt),
+		})
+		.sync();
 	return {
 		...l,
 		labels: labelNames(ctx, id),
@@ -333,12 +339,8 @@ export function getIssue(ctx: Ctx, ref: string) {
 				orderBy: asc(reports.createdAt),
 			})
 			.sync(),
-		questions: q.questions
-			.findMany({
-				where: eq(questions.issueId, id),
-				orderBy: asc(questions.createdAt),
-			})
-			.sync(),
+		questions: qs,
+		openQuestions: qs.filter((x) => x.state === "open").length,
 		comments: q.comments
 			.findMany({
 				where: eq(comments.issueId, id),
